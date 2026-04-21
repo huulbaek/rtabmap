@@ -11,6 +11,14 @@
 import Foundation
 import CommonCrypto
 
+/// Singleton store for manual-photo sessions on disk.
+///
+/// Threading contract: the store is **not** internally synchronized. Callers must
+/// serialize access — typically the main thread for session-lifecycle calls
+/// (`startNewSession` / `attachSession` / `detach` / `deleteSession`) and a
+/// dedicated background queue for `writePhoto`. `currentSessionId` is read in
+/// both contexts; callers must not mutate it from a background queue while a
+/// main-thread lifecycle call is in flight.
 final class ManualPhotoStore {
 
     static let shared = ManualPhotoStore()
@@ -20,7 +28,6 @@ final class ManualPhotoStore {
     private let schemaVersion = 1
 
     private let fm = FileManager.default
-    private let writeQueue = DispatchQueue(label: "rtabmap.manualPhoto.write")
 
     /// Current session id. `nil` until `startNewSession` or `attachSession` is called.
     private(set) var currentSessionId: String?
@@ -229,12 +236,8 @@ final class ManualPhotoStore {
     }
 
     private func atomicWrite(data: Data, to url: URL) throws {
-        let tmp = url.appendingPathExtension("tmp")
-        try data.write(to: tmp, options: .atomic)
-        if fm.fileExists(atPath: url.path) {
-            try fm.removeItem(at: url)
-        }
-        try fm.moveItem(at: tmp, to: url)
+        // Data.write(.atomic) already does a tmp-write-then-rename — crash-safe with no extra staging.
+        try data.write(to: url, options: .atomic)
     }
 
     private func sha256Hex(data: Data) -> String {
