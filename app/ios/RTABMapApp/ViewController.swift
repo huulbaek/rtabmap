@@ -2651,7 +2651,11 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
     }
 
     private func presentPhotoEditor(for result: ManualPhotoStore.WriteResult) {
-        // Wired up in Task 9. No-op for now.
+        let editor = PhotoMetadataEditor(jpegURL: result.jpegURL, sidecar: result.sidecar)
+        editor.delegate = self
+        let nav = UINavigationController(rootViewController: editor)
+        nav.modalPresentationStyle = .formSheet
+        present(nav, animated: true)
     }
 
     @IBAction func newScanAction(_ sender: UIButton) {
@@ -2884,5 +2888,14 @@ extension SKStoreReviewController {
         if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
             requestReview(in: scene)
         }
+    }
+}
+
+extension ViewController: PhotoMetadataEditorDelegate {
+    func editor(_ editor: PhotoMetadataEditor, didSave sidecar: PhotoSidecar, at jpegURL: URL) {
+        // No-op; the gallery (Task 10/11) refreshes on next appearance.
+    }
+    func editor(_ editor: PhotoMetadataEditor, didDelete jpegURL: URL) {
+        // No-op; the gallery refresh covers this too.
     }
 }
