@@ -1670,6 +1670,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
                     catch {
                         print("Could not clear tmp database: \(error)")
                     }
+                    ManualPhotoStore.shared.deleteSession(for: self.RTABMAP_TMP_DB)
                     self.newScan(dataRecordingMode: dataRecordingMode)
                 }
                 alert.addAction(alertActionNo)
@@ -1766,7 +1767,14 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             self.rtabmap!.setDataRecorderMode(enabled: dataRecordingMode)
             self.optimizedGraphShown = true // Always reset to true when opening a database
             self.rtabmap!.openDatabase(databasePath: tmpDatabase.path, databaseInMemory: inMemory, optimize: false, clearDatabase: true)
-            
+
+            do {
+                let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+                _ = try ManualPhotoStore.shared.startNewSession(dbFilename: self.RTABMAP_TMP_DB, appVersion: appVersion)
+            } catch {
+                print("ManualPhotoStore.startNewSession failed: \(error)")
+            }
+
             if(!(self.mState == State.STATE_CAMERA || self.mState == State.STATE_MAPPING))
             {
                 if(mDataRecording) {
@@ -1884,6 +1892,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             }
             alert.addAction(yes)
             self.present(alert, animated: true, completion: nil)
+            try? ManualPhotoStore.shared.recordSavedDB(filename: fileName)
             do {
                 let tmpDatabase = self.getDocumentDirectory().appendingPathComponent(self.RTABMAP_TMP_DB)
                 try FileManager.default.removeItem(at: tmpDatabase)
@@ -2197,6 +2206,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         
         openedDatabasePath = fileUrl;
         let fileName: String = self.openedDatabasePath!.lastPathComponent
+        _ = ManualPhotoStore.shared.attachSession(for: fileName)
         
         var progressDialog = UIAlertController(title: "Loading", message: String(format: "Loading \"%@\". Please wait while point clouds and/or meshes are created...", fileName), preferredStyle: .alert)
         
@@ -2875,6 +2885,7 @@ extension ViewController: DatabaseViewDelegate {
         catch {
             print("Error deleting file \(databaseURL)")
         }
+        ManualPhotoStore.shared.deleteSession(for: databaseURL.lastPathComponent)
         self.updateDatabases()
         if(!databases.isEmpty)
         {
