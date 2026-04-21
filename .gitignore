@@ -1,4 +1,5 @@
 /lib
+.worktrees/
 .DS_Store
 .settings/language.settings.xml
 .idea/
