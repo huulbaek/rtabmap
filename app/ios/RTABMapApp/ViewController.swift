@@ -2537,8 +2537,121 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
     }
 
     @IBAction func takePhotoAction(_ sender: UIButton) {
-        // Implemented in Task 7.
-        showToast(message: "Photo capture (stub)", seconds: 1)
+        guard let frame = session.currentFrame else {
+            showToast(message: "No frame available", seconds: 1)
+            return
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        capture(frame: frame)
+    }
+
+    private func capture(frame: ARFrame) {
+        // Snapshot primitives synchronously before the ARFrame goes stale.
+        let arkitTs = frame.timestamp
+        let wallClock = Date()
+        let t = frame.camera.transform
+        let transformRows: [[Float]] = [
+            [t[0,0], t[0,1], t[0,2], t[0,3]],
+            [t[1,0], t[1,1], t[1,2], t[1,3]],
+            [t[2,0], t[2,1], t[2,2], t[2,3]],
+            [t[3,0], t[3,1], t[3,2], t[3,3]],
+        ]
+        let intr = frame.camera.intrinsics
+        let imageSize = frame.camera.imageResolution
+        let lightAmbient = frame.lightEstimate?.ambientIntensity.map(Double.init)
+        let trackingState = trackingStateString(frame.camera.trackingState)
+        let orientation = UIApplication.shared.windows.first?.windowScene?.interfaceOrientation ?? .portrait
+        let orientationStr = orientationString(orientation)
+
+        let includeGPS = UserDefaults.standard.object(forKey: "PhotoIncludeGPS") as? Bool ?? true
+        let gps: GPSMeta? = {
+            guard includeGPS, let loc = mLastKnownLocation else { return nil }
+            return GPSMeta(
+                lat: loc.coordinate.latitude,
+                lon: loc.coordinate.longitude,
+                alt: loc.verticalAccuracy >= 0 ? loc.altitude : nil,
+                hAcc: loc.horizontalAccuracy >= 0 ? loc.horizontalAccuracy : nil,
+                vAcc: loc.verticalAccuracy >= 0 ? loc.verticalAccuracy : nil
+            )
+        }()
+
+        let jpegQualityRaw = UserDefaults.standard.object(forKey: "PhotoJPEGQuality") as? Double ?? 0.85
+        let jpegQuality = CGFloat(max(0.5, min(1.0, jpegQualityRaw)))
+
+        // Retain the pixel buffer for use on the background queue.
+        let pb = frame.capturedImage
+        let retained = Unmanaged.passRetained(pb)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { retained.release() }
+            let buffer = retained.takeUnretainedValue()
+            do {
+                let jpeg = try PixelBufferJPEG.jpeg(from: buffer, interfaceOrientation: orientation, quality: jpegQuality)
+
+                // Ensure a session exists (auto-start if the user hasn't triggered newScan yet).
+                if ManualPhotoStore.shared.currentSessionId == nil {
+                    let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+                    _ = try ManualPhotoStore.shared.startNewSession(dbFilename: self.RTABMAP_TMP_DB, appVersion: appVersion)
+                }
+
+                let sessionId = ManualPhotoStore.shared.currentSessionId ?? ""
+                let result = try ManualPhotoStore.shared.writePhoto(jpeg: jpeg) { shortId, filename, bytes, sha in
+                    PhotoSidecar(
+                        id: shortId,
+                        sessionId: sessionId,
+                        capturedAt: wallClock,
+                        arkitTimestamp: arkitTs,
+                        camera: CameraMeta(
+                            transform: transformRows,
+                            intrinsics: .init(fx: intr[0,0], fy: intr[1,1], cx: intr[2,0], cy: intr[2,1]),
+                            imageSize: .init(width: Int(imageSize.width), height: Int(imageSize.height)),
+                            orientation: orientationStr,
+                            trackingState: trackingState
+                        ),
+                        env: EnvMeta(ambientIntensity: lightAmbient),
+                        gps: gps,
+                        file: FileMeta(name: filename, bytes: bytes, sha256: sha),
+                        user: .empty,
+                        schemaVersion: 1
+                    )
+                }
+                DispatchQueue.main.async {
+                    self.showToast(message: "Photo saved", seconds: 1)
+                    self.presentPhotoEditor(for: result)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showToast(message: "Failed to save photo: \(error.localizedDescription)", seconds: 3)
+                }
+            }
+        }
+    }
+
+    private func trackingStateString(_ s: ARCamera.TrackingState) -> String {
+        switch s {
+        case .normal: return "normal"
+        case .notAvailable: return "notAvailable"
+        case .limited(.initializing): return "limitedInitializing"
+        case .limited(.relocalizing): return "limitedRelocalizing"
+        case .limited(.excessiveMotion): return "limitedExcessiveMotion"
+        case .limited(.insufficientFeatures): return "limitedInsufficientFeatures"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func orientationString(_ o: UIInterfaceOrientation) -> String {
+        switch o {
+        case .portrait: return "portrait"
+        case .portraitUpsideDown: return "portraitUpsideDown"
+        case .landscapeLeft: return "landscapeLeft"
+        case .landscapeRight: return "landscapeRight"
+        case .unknown: return "unknown"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func presentPhotoEditor(for result: ManualPhotoStore.WriteResult) {
+        // Wired up in Task 9. No-op for now.
     }
 
     @IBAction func newScanAction(_ sender: UIButton) {
