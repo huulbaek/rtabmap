@@ -2206,7 +2206,17 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         
         openedDatabasePath = fileUrl;
         let fileName: String = self.openedDatabasePath!.lastPathComponent
-        _ = ManualPhotoStore.shared.attachSession(for: fileName)
+        if ManualPhotoStore.shared.attachSession(for: fileName) == nil {
+            // First-time open of this DB (or a DB shared in from elsewhere) — mint a session
+            // bound to its real filename so any subsequent captures (e.g. during Append Scan)
+            // go into the correct folder.
+            do {
+                let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+                _ = try ManualPhotoStore.shared.startNewSession(dbFilename: fileName, appVersion: appVersion)
+            } catch {
+                print("ManualPhotoStore.startNewSession (openDatabase) failed: \(error)")
+            }
+        }
         
         var progressDialog = UIAlertController(title: "Loading", message: String(format: "Loading \"%@\". Please wait while point clouds and/or meshes are created...", fileName), preferredStyle: .alert)
         
@@ -2623,13 +2633,15 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             do {
                 let jpeg = try PixelBufferJPEG.jpeg(from: buffer, interfaceOrientation: orientation, quality: jpegQuality)
 
-                // Ensure a session exists (auto-start if the user hasn't triggered newScan yet).
-                if ManualPhotoStore.shared.currentSessionId == nil {
-                    let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-                    _ = try ManualPhotoStore.shared.startNewSession(dbFilename: self.RTABMAP_TMP_DB, appVersion: appVersion)
+                // The session is owned by the main-thread lifecycle (newScan / openDatabase).
+                // If it's missing here, that's a caller bug — surface it rather than racing
+                // to create one from a background queue.
+                guard let sessionId = ManualPhotoStore.shared.currentSessionId else {
+                    DispatchQueue.main.async {
+                        self.showToast(message: "No photo session — start a scan first", seconds: 2)
+                    }
+                    return
                 }
-
-                let sessionId = ManualPhotoStore.shared.currentSessionId ?? ""
                 let result = try ManualPhotoStore.shared.writePhoto(jpeg: jpeg) { shortId, filename, bytes, sha in
                     PhotoSidecar(
                         id: shortId,
