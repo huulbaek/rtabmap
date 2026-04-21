@@ -705,6 +705,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = false
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = false
+            photoButton.isHidden = false
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = false
@@ -731,6 +732,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = !mHudVisible
             stopButton.isHidden = false
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = true
@@ -760,6 +762,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = mState != .STATE_VISUALIZING_CAMERA
@@ -786,6 +789,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = !mHudVisible
             stopCameraButton.isHidden = true
@@ -812,6 +816,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = mState != .STATE_WELCOME && !mHudVisible
             newScanButtonLarge.isHidden = mState != .STATE_WELCOME
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = true
