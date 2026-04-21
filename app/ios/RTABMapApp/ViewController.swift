@@ -2422,6 +2422,19 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
                 if(self.rtabmap!.writeExportedMesh(directory: exportDir.path, name: fileName))
                 {
                     do {
+                        // Copy manual photos into the export dir if enabled and not LAZ export.
+                        let includePhotos = UserDefaults.standard.object(forKey: "PhotoIncludeInExport") as? Bool ?? true
+                        if includePhotos, let photosFolder = ManualPhotoStore.shared.currentSessionURL(),
+                           FileManager.default.fileExists(atPath: photosFolder.path) {
+                            let destination = exportDir.appendingPathComponent("manual_photos")
+                            do {
+                                try FileManager.default.copyItem(at: photosFolder, to: destination)
+                                print("Copied manual photos folder into export staging")
+                            } catch {
+                                print("Failed to copy manual photos into export: \(error)")
+                            }
+                        }
+
                         let fileURLs = try FileManager.default.contentsOfDirectory(at: exportDir, includingPropertiesForKeys: nil)
                         if(!fileURLs.isEmpty)
                         {
