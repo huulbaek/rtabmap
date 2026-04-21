@@ -984,8 +984,20 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             fileMenuChildren.append(UIAction(title: "Measuring...", image: UIImage(systemName: "ruler"), attributes: .disabled, state: .off, handler: { _ in
             }))
         }
+        let photoCount = ManualPhotoStore.shared.currentPhotoCount()
+        fileMenuChildren.append(UIAction(
+            title: "Manual Photos (\(photoCount))",
+            image: UIImage(systemName: "photo.on.rectangle"),
+            handler: { [weak self] _ in
+                guard let self = self else { return }
+                let gallery = ManualPhotoGalleryViewController()
+                let nav = UINavigationController(rootViewController: gallery)
+                nav.modalPresentationStyle = .formSheet
+                self.present(nav, animated: true)
+            }
+        ))
         fileMenuChildren.append(advancedMenu)
-        
+
         // File menu
         let fileMenu = UIMenu(title: "File", options: .displayInline, children: fileMenuChildren)
         
