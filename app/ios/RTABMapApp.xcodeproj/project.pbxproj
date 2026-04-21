@@ -90,6 +90,7 @@
 		BB2604211300000000000003 /* PixelBufferJPEG.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000004 /* PixelBufferJPEG.swift */; };
 		BB2604211300000000000005 /* ManualPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000006 /* ManualPhotoStore.swift */; };
 		BB2604211300000000000007 /* PhotoMetadataEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000008 /* PhotoMetadataEditor.swift */; };
+		BB2604211300000000000009 /* ManualPhotoGalleryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB260421130000000000000A /* ManualPhotoGalleryViewController.swift */; };
 		4EE016B3259BE441008CCE65 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016AF259BE441008CCE65 /* ViewController.swift */; };
 		4EE016B4259BE441008CCE65 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016B0259BE441008CCE65 /* SceneDelegate.swift */; };
 		4EE016B9259BE449008CCE65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016B8259BE449008CCE65 /* AppDelegate.swift */; };
@@ -194,6 +195,7 @@
 		BB2604211300000000000004 /* PixelBufferJPEG.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PixelBufferJPEG.swift; path = RTABMapApp/PixelBufferJPEG.swift; sourceTree = "<group>"; };
 		BB2604211300000000000006 /* ManualPhotoStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ManualPhotoStore.swift; path = RTABMapApp/ManualPhotoStore.swift; sourceTree = "<group>"; };
 		BB2604211300000000000008 /* PhotoMetadataEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PhotoMetadataEditor.swift; path = RTABMapApp/PhotoMetadataEditor.swift; sourceTree = "<group>"; };
+		BB260421130000000000000A /* ManualPhotoGalleryViewController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ManualPhotoGalleryViewController.swift; path = RTABMapApp/ManualPhotoGalleryViewController.swift; sourceTree = "<group>"; };
 		4ED73AD02D7FECF3007899C2 /* liblaszip.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = liblaszip.a; path = RTABMapApp/Libraries/lib/liblaszip.a; sourceTree = "<group>"; };
 		4EE015C2259A2AF0008CCE65 /* RTABMapApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RTABMapApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE016AF259BE441008CCE65 /* ViewController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ViewController.swift; path = RTABMapApp/ViewController.swift; sourceTree = "<group>"; };
@@ -497,6 +499,7 @@
 				BB2604211300000000000004 /* PixelBufferJPEG.swift */,
 				BB2604211300000000000006 /* ManualPhotoStore.swift */,
 				BB2604211300000000000008 /* PhotoMetadataEditor.swift */,
+				BB260421130000000000000A /* ManualPhotoGalleryViewController.swift */,
 			);
 			name = RTABMapApp;
 			sourceTree = "<group>";
@@ -880,6 +883,7 @@
 				BB2604211300000000000003 /* PixelBufferJPEG.swift in Sources */,
 				BB2604211300000000000005 /* ManualPhotoStore.swift in Sources */,
 				BB2604211300000000000007 /* PhotoMetadataEditor.swift in Sources */,
+				BB2604211300000000000009 /* ManualPhotoGalleryViewController.swift in Sources */,
 				4EFD0B9A259D501E00575D88 /* bounding_box.cpp in Sources */,
 				4EFD0F3A259D5D1500575D88 /* CameraMobile.cpp in Sources */,
 				4EFD0BA6259D501E00575D88 /* shaders.cpp in Sources */,
