@@ -86,6 +86,9 @@
 		4E3525672DE4C72D00F39D8F /* libamd.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 4E3525662DE4C72D00F39D8F /* libamd.a */; };
 		4E8B155426273A580037FC53 /* Zip in Frameworks */ = {isa = PBXBuildFile; productRef = 4E8B155326273A580037FC53 /* Zip */; };
 		4EB1A66625A0D90B0043C7BF /* RTABMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EB1A66525A0D90B0043C7BF /* RTABMap.swift */; };
+		BB2604211300000000000001 /* PhotoMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000002 /* PhotoMetadata.swift */; };
+		BB2604211300000000000003 /* PixelBufferJPEG.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000004 /* PixelBufferJPEG.swift */; };
+		BB2604211300000000000005 /* ManualPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2604211300000000000006 /* ManualPhotoStore.swift */; };
 		4EE016B3259BE441008CCE65 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016AF259BE441008CCE65 /* ViewController.swift */; };
 		4EE016B4259BE441008CCE65 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016B0259BE441008CCE65 /* SceneDelegate.swift */; };
 		4EE016B9259BE449008CCE65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EE016B8259BE449008CCE65 /* AppDelegate.swift */; };
@@ -186,6 +189,9 @@
 		4E3525662DE4C72D00F39D8F /* libamd.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libamd.a; path = RTABMapApp/Libraries/lib/libamd.a; sourceTree = "<group>"; };
 		4E401BE825CC92C100240A56 /* ProgressionStatus.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProgressionStatus.h; path = ../android/jni/ProgressionStatus.h; sourceTree = "<group>"; };
 		4EB1A66525A0D90B0043C7BF /* RTABMap.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = RTABMap.swift; path = RTABMapApp/RTABMap.swift; sourceTree = "<group>"; };
+		BB2604211300000000000002 /* PhotoMetadata.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PhotoMetadata.swift; path = RTABMapApp/PhotoMetadata.swift; sourceTree = "<group>"; };
+		BB2604211300000000000004 /* PixelBufferJPEG.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = PixelBufferJPEG.swift; path = RTABMapApp/PixelBufferJPEG.swift; sourceTree = "<group>"; };
+		BB2604211300000000000006 /* ManualPhotoStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ManualPhotoStore.swift; path = RTABMapApp/ManualPhotoStore.swift; sourceTree = "<group>"; };
 		4ED73AD02D7FECF3007899C2 /* liblaszip.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = liblaszip.a; path = RTABMapApp/Libraries/lib/liblaszip.a; sourceTree = "<group>"; };
 		4EE015C2259A2AF0008CCE65 /* RTABMapApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RTABMapApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE016AF259BE441008CCE65 /* ViewController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = ViewController.swift; path = RTABMapApp/ViewController.swift; sourceTree = "<group>"; };
@@ -485,6 +491,9 @@
 				4EB1A66525A0D90B0043C7BF /* RTABMap.swift */,
 				4E2C516525A63119005CEDBD /* DatabaseView.swift */,
 				4E2C516625A63119005CEDBD /* VerticalScrollerView.swift */,
+				BB2604211300000000000002 /* PhotoMetadata.swift */,
+				BB2604211300000000000004 /* PixelBufferJPEG.swift */,
+				BB2604211300000000000006 /* ManualPhotoStore.swift */,
 			);
 			name = RTABMapApp;
 			sourceTree = "<group>";
@@ -864,6 +873,9 @@
 				4EFD0BAE259D501E00575D88 /* band.cpp in Sources */,
 				4EFD0B97259D501E00575D88 /* line.cpp in Sources */,
 				4EB1A66625A0D90B0043C7BF /* RTABMap.swift in Sources */,
+				BB2604211300000000000001 /* PhotoMetadata.swift in Sources */,
+				BB2604211300000000000003 /* PixelBufferJPEG.swift in Sources */,
+				BB2604211300000000000005 /* ManualPhotoStore.swift in Sources */,
 				4EFD0B9A259D501E00575D88 /* bounding_box.cpp in Sources */,
 				4EFD0F3A259D5D1500575D88 /* CameraMobile.cpp in Sources */,
 				4EFD0BA6259D501E00575D88 /* shaders.cpp in Sources */,
