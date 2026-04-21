@@ -47,6 +47,18 @@
                                             <action selector="recordAction:" destination="zah-iI-EPt" eventType="touchUpInside" id="dzY-yL-YBg"/>
                                         </connections>
                                     </button>
+                                    <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="Pho-To-But" userLabel="PhotoButton">
+                                        <rect key="frame" x="0.0" y="181" width="60" height="60"/>
+                                        <constraints>
+                                            <constraint firstAttribute="height" constant="60" id="Pho-Hc-001"/>
+                                            <constraint firstAttribute="width" constant="60" id="Pho-Wc-002"/>
+                                        </constraints>
+                                        <color key="tintColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                        <state key="normal" backgroundImage="camera.circle" catalog="system"/>
+                                        <connections>
+                                            <action selector="takePhotoAction:" destination="zah-iI-EPt" eventType="touchUpInside" id="Pho-Ac-003"/>
+                                        </connections>
+                                    </button>
                                     <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="lFB-Lm-zFS" userLabel="AddMeasureButton">
                                         <rect key="frame" x="0.0" y="181.33333333333334" width="60" height="57.999999999999972"/>
                                         <constraints>
@@ -272,6 +284,7 @@
                         <outlet property="menuButton" destination="y53-OI-O76" id="v3g-JB-SsY"/>
                         <outlet property="newScanButtonLarge" destination="Jj4-ow-MwD" id="0Hv-3K-Xjh"/>
                         <outlet property="orthoDistanceSlider" destination="30J-Tx-NRW" id="4J1-8u-tDY"/>
+                        <outlet property="photoButton" destination="Pho-To-But" id="Pho-Ou-004"/>
                         <outlet property="orthoGridSlider" destination="Z1x-Af-hdf" id="Zsn-xz-jn0"/>
                         <outlet property="recordButton" destination="7Lv-u6-mGh" id="xTu-EK-FH2"/>
                         <outlet property="removeMeasureButton" destination="c1k-0i-64A" id="E9z-yH-Vye"/>

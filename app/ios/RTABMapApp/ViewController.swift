@@ -109,6 +109,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
     
     @IBOutlet weak var stopButton: UIButton!
     @IBOutlet weak var recordButton: UIButton!
+    @IBOutlet weak var photoButton: UIButton!
     @IBOutlet weak var menuButton: UIButton!
     @IBOutlet weak var viewButton: UIButton!
     @IBOutlet weak var newScanButtonLarge: UIButton!
@@ -2529,7 +2530,12 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         lowMemoryWarningShown = false
         updateState(state: .STATE_MAPPING)
     }
-    
+
+    @IBAction func takePhotoAction(_ sender: UIButton) {
+        // Implemented in Task 7.
+        showToast(message: "Photo capture (stub)", seconds: 1)
+    }
+
     @IBAction func newScanAction(_ sender: UIButton) {
         newScan()
     }
