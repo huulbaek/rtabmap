@@ -2633,9 +2633,9 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         ]
         let intr = frame.camera.intrinsics
         let imageSize = frame.camera.imageResolution
-        let lightAmbient = frame.lightEstimate?.ambientIntensity.map(Double.init)
+        let lightAmbient = frame.lightEstimate.map { Double($0.ambientIntensity) }
         let trackingState = trackingStateString(frame.camera.trackingState)
-        let orientation = UIApplication.shared.windows.first?.windowScene?.interfaceOrientation ?? .portrait
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
         let orientationStr = orientationString(orientation)
 
         let includeGPS = UserDefaults.standard.object(forKey: "PhotoIncludeGPS") as? Bool ?? true
@@ -2653,9 +2653,10 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         let jpegQualityRaw = UserDefaults.standard.object(forKey: "PhotoJPEGQuality") as? Double ?? 0.85
         let jpegQuality = CGFloat(max(0.5, min(1.0, jpegQualityRaw)))
 
-        // Retain the pixel buffer for use on the background queue.
+        // Retain the pixel buffer for use on the background queue. CVPixelBuffer isn't
+        // Sendable, but ownership is handed off: only that queue reads and releases it.
         let pb = frame.capturedImage
-        let retained = Unmanaged.passRetained(pb)
+        nonisolated(unsafe) let retained = Unmanaged.passRetained(pb)
 
         DispatchQueue.global(qos: .userInitiated).async {
             defer { retained.release() }
