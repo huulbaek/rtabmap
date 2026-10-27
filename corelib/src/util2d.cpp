@@ -34,16 +34,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/utilite/UStl.h>
 #include <rtabmap/core/util3d_transforms.h>
 #include <rtabmap/core/StereoDense.h>
-#include <opencv2/calib3d/calib3d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/types_c.h>
 #include <map>
 #include <Eigen/Core>
 
 #if CV_MAJOR_VERSION >= 3
 #include <opencv2/photo/photo.hpp>
+#include <opencv2/stitching/detail/exposure_compensate.hpp>
+#endif
+
+#if CV_MAJOR_VERSION < 5
+#include <opencv2/calib3d/calib3d.hpp>
+#else
+#include <opencv2/geometry.hpp>
 #endif
 
 namespace rtabmap
@@ -138,6 +143,9 @@ std::vector<cv::Point2f> calcStereoCorrespondences(
 	UDEBUG("iterations=%d", iterations);
 	UDEBUG("ssdApproach=%d", ssdApproach?1:0);
 	UASSERT(minDisparityF >= 0.0f && minDisparityF <= maxDisparityF);
+	UASSERT(!leftImage.empty() && !rightImage.empty());
+	UASSERT(leftImage.size() == rightImage.size());
+	UASSERT(leftImage.type() == CV_8UC1 && rightImage.type() == CV_8UC1);
 
 	// window should be odd
 	if(winSize.width%2 == 0)
@@ -213,7 +221,8 @@ std::vector<cv::Point2f> calcStereoCorrespondences(
 										cv::Range(center.y-halfWin.height,center.y+halfWin.height+1),
 										cv::Range(center.x+d-halfWin.width,center.x+d+halfWin.width+1));
 						scores[oi] = ssdApproach?ssd(windowLeft, windowRight):sad(windowLeft, windowRight);
-						if(scores[oi] > 0 && (bestScore < 0.0f || scores[oi] < bestScore))
+						// score: the lower the better
+						if(scores[oi] >= 0 && (bestScore < 0.0f || scores[oi] < bestScore))
 						{
 							bestScoreIndex = oi;
 							bestScore = scores[oi];
@@ -357,17 +366,6 @@ typedef float acctype;
 typedef float itemtype;
 #define  CV_DESCALE(x,n)     (((x) + (1 << ((n)-1))) >> (n))
 
-//
-// Adapted from OpenCV cv::calcOpticalFlowPyrLK() to force
-// only optical flow on x-axis (assuming that prevImg is the left
-// image and nextImg is the right image):
-// https://github.com/Itseez/opencv/blob/ddf82d0b154873510802ef75c53e628cd7b2cb13/modules/video/src/lkpyramid.cpp#L1088
-//
-// The difference is on this line:
-// https://github.com/Itseez/opencv/blob/ddf82d0b154873510802ef75c53e628cd7b2cb13/modules/video/src/lkpyramid.cpp#L683-L684
-// - cv::Point2f delta( (float)((A12*b2 - A22*b1) * D), (float)((A12*b1 - A11*b2) * D));
-// + cv::Point2f delta( (float)((A12*b2 - A22*b1) * D), 0); //<--- note the 0 for y
-//
 void calcOpticalFlowPyrLKStereo( cv::InputArray _prevImg, cv::InputArray _nextImg,
                            cv::InputArray _prevPts, cv::InputOutputArray _nextPts,
                            cv::OutputArray _status, cv::OutputArray _err,
@@ -747,7 +745,7 @@ cv::Mat disparityFromStereoImages(
 	cv::Mat leftMono;
 	if(leftImage.channels() == 3)
 	{
-		cv::cvtColor(leftImage, leftMono, CV_BGR2GRAY);
+		cv::cvtColor(leftImage, leftMono, cv::COLOR_BGR2GRAY);
 	}
 	else
 	{
@@ -1032,8 +1030,9 @@ float getDepth(
 						}
 						else
 						{
-							float depthError = depthErrorRatio * tmp;
-							if(fabs(d - tmp/float(count)) < depthError)
+							float mean = tmp/float(count);
+							float depthError = depthErrorRatio * mean;
+							if(fabs(d - mean) < depthError)
 
 							{
 								tmp += d;
@@ -1193,7 +1192,7 @@ cv::Rect computeRoi(const cv::Size & imageSize, const std::vector<float> & roiRa
 	}
 	else
 	{
-		UERROR("Image is null or _roiRatios(=%d) != 4", roiRatios.size());
+		UERROR("Image is null or _roiRatios(=%d) != 4", (int)roiRatios.size());
 		return cv::Rect();
 	}
 }
@@ -1358,7 +1357,6 @@ cv::Mat interpolate(const cv::Mat & image, int factor, float depthErrorRatio)
 	return out;
 }
 
-// Registration Depth to RGB (return registered depth image)
 cv::Mat registerDepth(
 	const cv::Mat & depth,
 	const cv::Mat & depthK,
@@ -1477,9 +1475,9 @@ cv::Mat fillDepthHoles(const cv::Mat & depth, int maximumHoleSize, float errorRa
 	UASSERT(maximumHoleSize > 0);
 	cv::Mat output = depth.clone();
 	bool isMM = depth.type() == CV_16UC1;
-	for(int y=0; y<depth.rows-2; ++y)
+	for(int y=0; y<depth.rows-1; ++y)
 	{
-		for(int x=0; x<depth.cols-2; ++x)
+		for(int x=0; x<depth.cols-1; ++x)
 		{
 			float a, bRight, bDown;
 			if(isMM)
@@ -1873,7 +1871,7 @@ cv::Mat fastBilateralFiltering(const cv::Mat & depth, float sigmaS, float sigmaR
 	if (!found_finite)
 	{
 		UWARN("Given an empty depth image. Doing nothing.");
-		return cv::Mat();
+		return output;
 	}
 	UDEBUG("base_min=%f base_max=%f", base_min, base_max);
 
@@ -2042,8 +2040,8 @@ cv::Mat brightnessAndContrastAuto(const cv::Mat &src, const cv::Mat & mask, floa
     //to calculate grayscale histogram
     cv::Mat gray;
     if (src.type() == CV_8UC1) gray = src;
-    else if (src.type() == CV_8UC3) cvtColor(src, gray, CV_BGR2GRAY);
-    else if (src.type() == CV_8UC4) cvtColor(src, gray, CV_BGRA2GRAY);
+    else if (src.type() == CV_8UC3) cvtColor(src, gray, cv::COLOR_BGR2GRAY);
+    else if (src.type() == CV_8UC4) cvtColor(src, gray, cv::COLOR_BGRA2GRAY);
     if (clipLowHistPercent == 0 && clipHighHistPercent == 0)
     {
         // keep full available range
@@ -2085,8 +2083,16 @@ cv::Mat brightnessAndContrastAuto(const cv::Mat &src, const cv::Mat & mask, floa
     // current range
     float inputRange = maxGray - minGray;
 
-    alpha = (histSize - 1) / inputRange;   // alpha expands current range to histsize range
-    beta = -minGray * alpha;             // beta shifts current range so that minGray will go to 0
+	if(inputRange == 0.0f)
+	{
+		alpha = 1.0f;
+		beta = 0.0f;
+	}
+	else
+	{
+		alpha = (histSize - 1) / inputRange;   // alpha expands current range to histsize range
+		beta = -minGray * alpha;             // beta shifts current range so that minGray will go to 0
+	}
 
     UINFO("minGray=%f maxGray=%f alpha=%f beta=%f", minGray, maxGray, alpha, beta);
 
@@ -2134,6 +2140,66 @@ cv::Mat exposureFusion(const std::vector<cv::Mat> & images)
 	return fusion;
 }
 
+bool stereoExposureCompensation(
+	const cv::Mat & left,
+	const cv::Mat & right,
+	cv::Mat & leftOut,
+	cv::Mat & rightOut,
+	std::vector<double> * gains)
+{
+	if(gains)
+	{
+		gains->clear();
+	}
+#if CV_MAJOR_VERSION >= 3
+	if(!left.empty() && left.size() == right.size() &&
+	   left.depth() == CV_8U && right.depth() == CV_8U)
+	{
+		// The gains are estimated on images of the same type (e.g., a color left image
+		// with a mono right one, as stereo odometry can keep), then applied to the images
+		// as they are.
+		cv::Mat leftFeed = left;
+		cv::Mat rightFeed = right;
+		if(left.type() != right.type())
+		{
+			if(left.channels() == 3)
+			{
+				cv::cvtColor(left, leftFeed, cv::COLOR_BGR2GRAY);
+			}
+			if(right.channels() == 3)
+			{
+				cv::cvtColor(right, rightFeed, cv::COLOR_BGR2GRAY);
+			}
+		}
+		cv::Ptr<cv::detail::ExposureCompensator> compensator = cv::detail::ExposureCompensator::createDefault(cv::detail::ExposureCompensator::GAIN);
+		std::vector<cv::Point> topLeftCorners(2, cv::Point(0,0));
+		std::vector<cv::UMat> images;
+		std::vector<cv::UMat> masks(2, cv::UMat(left.size(), CV_8UC1, cv::Scalar(255)));
+		images.push_back(leftFeed.getUMat(cv::ACCESS_READ));
+		images.push_back(rightFeed.getUMat(cv::ACCESS_READ));
+		compensator->feed(topLeftCorners, images, masks);
+		leftOut = left.clone();
+		compensator->apply(0, cv::Point(0,0), leftOut, masks[0]);
+		rightOut = right.clone();
+		compensator->apply(1, cv::Point(0,0), rightOut, masks[1]);
+		cv::detail::GainCompensator * gainCompensator = (cv::detail::GainCompensator*)compensator.get();
+		UDEBUG("gains = %f %f ", gainCompensator->gains()[0], gainCompensator->gains()[1]);
+		if(gains)
+		{
+			*gains = gainCompensator->gains();
+		}
+		return true;
+	}
+	UWARN("Stereo exposure compensation needs two 8 bits images of the same size (left=%dx%d type=%d, right=%dx%d type=%d)",
+			left.cols, left.rows, left.type(), right.cols, right.rows, right.type());
+#else
+	UWARN("Stereo exposure compensation is only available when rtabmap is built with OpenCV3.");
+#endif
+	leftOut = left.clone();
+	rightOut = right.clone();
+	return false;
+}
+
 void HSVtoRGB( float *r, float *g, float *b, float h, float s, float v )
 {
 	int i;
@@ -2142,6 +2208,10 @@ void HSVtoRGB( float *r, float *g, float *b, float h, float s, float v )
 		// achromatic (grey)
 		*r = *g = *b = v;
 		return;
+	}
+	if(h/360.0f >= 1.0f)
+	{
+		h -= floor(h/360.0f)*360.0f;
 	}
 	h /= 60;			// sector 0 to 5
 	i = floor( h );
@@ -2187,17 +2257,30 @@ void NMS(
 		const std::vector<cv::KeyPoint> & ptsIn,
 		const cv::Mat & descriptorsIn,
 		std::vector<cv::KeyPoint> & ptsOut,
-		cv::Mat & descriptorsOut,
-        int border, int dist_thresh, int img_width, int img_height)
+		cv::Mat & descriptorsOut, 
+		int dist_thresh, int img_width, int img_height)
 {
-    std::vector<cv::Point2f> pts_raw;
+	if(ptsIn.empty())
+	{
+		return;
+	}
+
+    std::vector<cv::Point2i> pts_raw;
 
     for (size_t i = 0; i < ptsIn.size(); i++)
     {
 		int u = (int) ptsIn[i].pt.x;
 		int v = (int) ptsIn[i].pt.y;
 
-		pts_raw.emplace_back(cv::Point2f(u, v));
+		if(u<0 || u>img_width || v<0 || v>img_height)
+		{
+			UERROR("Point (%f,%f) is outside the image size (%dx%d), this point is ignored!", ptsIn[i].pt.x, ptsIn[i].pt.y, img_width, img_height);
+			pts_raw.emplace_back(cv::Point2i(-1, -1));
+		}
+		else
+		{
+			pts_raw.emplace_back(cv::Point2i(u, v));
+		}
 	}
 
     //Grid Value Legend:
@@ -2216,9 +2299,14 @@ void NMS(
 
     for (size_t i = 0; i < pts_raw.size(); i++)
     {
-        int uu = (int) pts_raw[i].x;
-        int vv = (int) pts_raw[i].y;
+        int uu = pts_raw[i].x;
+        int vv = pts_raw[i].y;
 
+		if(uu < 0) {
+			// skip invalid points
+			continue;
+		}
+		
         grid.at<unsigned char>(vv, uu) = 100;
         inds.at<unsigned short>(vv, uu) = i;
 
@@ -2232,9 +2320,14 @@ void NMS(
 
     for (size_t i = 0; i < pts_raw.size(); i++)
     {
+		if(pts_raw[i].x < 0)
+		{
+			// skip invlaid points
+			continue;
+		}
     	// account for top left padding
-        int uu = (int) pts_raw[i].x + dist_thresh;
-        int vv = (int) pts_raw[i].y + dist_thresh;
+        int uu = pts_raw[i].x + dist_thresh;
+        int vv = pts_raw[i].y + dist_thresh;
         float c = confidence.at<float>(vv-dist_thresh, uu-dist_thresh);
 
         if (grid.at<unsigned char>(vv, uu) == 100)  // If not yet suppressed.
@@ -2295,7 +2388,9 @@ void NMS(
 std::vector<int> SSC(
 	const std::vector<cv::KeyPoint> & keypoints, int maxKeypoints, float tolerance, int cols, int rows, const std::vector<int> & indx)
 {
-	bool useIndx = keypoints.size() == indx.size();
+	UASSERT(keypoints.empty() || indx.empty() || keypoints.size() == indx.size());
+
+	bool useIndx = !indx.empty();
 	maxKeypoints = maxKeypoints - round(maxKeypoints * tolerance); // Just the make sure the solution will always be <= input maxKeypoints
 
 	// several temp expression variables to simplify solution equation
@@ -2375,7 +2470,7 @@ bool rotateImagesUpsideUpIfNecessary(
 	Transform localTransform = model.localTransform()*CameraModel::opticalRotation().inverse();
 	localTransform.getEulerAngles(roll, pitch, yaw);
 	UDEBUG("roll=%f pitch=%f yaw=%f", roll, pitch, yaw);
-	if(fabs(pitch > M_PI/4))
+	if(fabs(pitch) > M_PI/4)
 	{
 		// Return original because of ambiguity for what would be considered up...
 		UDEBUG("Ignoring image rotation as pitch(%f)>Pi/4", pitch);
@@ -2387,29 +2482,49 @@ bool rotateImagesUpsideUpIfNecessary(
 	}
 	if(roll >= M_PI/4 && roll < 3*M_PI/4)
 	{
-		UDEBUG("ROTATION_90 (roll=%f)", roll);
+		// Body roll near +pi/2 (right side down): the world-up direction projects to
+		// the image's left, so rotate the image 90 degrees clockwise to bring it
+		// upright (transpose + horizontal flip). Image dimensions HxW become WxH.
+		//
+		// Marker X moves from top-left to top-right quadrant:
+		//   before (3x6):              after (6x3):
+		//   . X . . . .                . . .
+		//   . . . . . .                . . X
+		//   . . . . . .                . . .
+		//                              . . .
+		//                              . . .
+		//                              . . .
+		UDEBUG("Rotating image 90 deg clockwise to correct body roll (roll=%f)", roll);
 		if(!rgb.empty())
 		{
-			cv::flip(rgb,rgb,1);
 			cv::transpose(rgb,rgb);
+			cv::flip(rgb,rgb,1);
 		}
 		if(!depth.empty())
 		{
-			cv::flip(depth,depth,1);
 			cv::transpose(depth,depth);
+			cv::flip(depth,depth,1);
 		}
 		cv::Size sizet(model.imageHeight(), model.imageWidth());
 		model = CameraModel(
 				model.fy(),
 				model.fx(),
-				model.cy(),
-				model.cx()>0?model.imageWidth()-model.cx():0,
-				model.localTransform()*rtabmap::Transform(0,-1,0,0, 1,0,0,0, 0,0,1,0));
+				model.cy()>0?model.imageHeight()-model.cy():0,
+				model.cx(),
+				model.localTransform()*rtabmap::Transform(0,1,0,0, -1,0,0,0, 0,0,1,0));
 		model.setImageSize(sizet);
 	}
 	else if(roll >= 3*M_PI/4 && roll < 5*M_PI/4)
 	{
-		UDEBUG("ROTATION_180 (roll=%f)", roll);
+		// Body roll near pi (upside down): rotate the image 180 degrees (horizontal
+		// flip + vertical flip). Image dimensions unchanged.
+		//
+		// Marker X moves from top-left to bottom-right quadrant:
+		//   before (3x6):              after (3x6):
+		//   . X . . . .                . . . . . .
+		//   . . . . . .                . . . . . .
+		//   . . . . . .                . . . . X .
+		UDEBUG("Rotating image 180 deg to correct body roll (roll=%f)", roll);
 		if(!rgb.empty())
 		{
 			cv::flip(rgb,rgb,1);
@@ -2431,29 +2546,42 @@ bool rotateImagesUpsideUpIfNecessary(
 	}
 	else if(roll >= 5*M_PI/4 && roll < 7*M_PI/4)
 	{
-		UDEBUG("ROTATION_270 (roll=%f)", roll);
+		// Body roll near -pi/2 / +3*pi/2 (left side down): the world-up direction
+		// projects to the image's right, so rotate the image 90 degrees counter-
+		// clockwise to bring it upright (horizontal flip + transpose). Image
+		// dimensions HxW become WxH.
+		//
+		// Marker X moves from top-left to bottom-left quadrant:
+		//   before (3x6):              after (6x3):
+		//   . X . . . .                . . .
+		//   . . . . . .                . . .
+		//   . . . . . .                . . .
+		//                              . . .
+		//                              X . .
+		//                              . . .
+		UDEBUG("Rotating image 90 deg counter-clockwise to correct body roll (roll=%f)", roll);
 		if(!rgb.empty())
 		{
-			cv::transpose(rgb,rgb);
 			cv::flip(rgb,rgb,1);
+			cv::transpose(rgb,rgb);
 		}
 		if(!depth.empty())
 		{
-			cv::transpose(depth,depth);
 			cv::flip(depth,depth,1);
+			cv::transpose(depth,depth);
 		}
 		cv::Size sizet(model.imageHeight(), model.imageWidth());
 		model = CameraModel(
 				model.fy(),
 				model.fx(),
-				model.cy()>0?model.imageHeight()-model.cy():0,
-				model.cx(),
-				model.localTransform()*rtabmap::Transform(0,1,0,0, -1,0,0,0, 0,0,1,0));
+				model.cy(),
+				model.cx()>0?model.imageWidth()-model.cx():0,
+				model.localTransform()*rtabmap::Transform(0,-1,0,0, 1,0,0,0, 0,0,1,0));
 		model.setImageSize(sizet);
 	}
 	else
 	{
-		UDEBUG("ROTATION_0 (roll=%f)", roll);
+		UDEBUG("Not rotating image, body roll within +/- pi/4 of upright (roll=%f)", roll);
 		return false;
 	}
 	return true;

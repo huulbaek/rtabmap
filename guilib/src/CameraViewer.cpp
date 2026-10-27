@@ -36,6 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/gui/CloudViewer.h>
 #include <rtabmap/utilite/UCv2Qt.h>
 #include <rtabmap/utilite/ULogger.h>
+#include <rtabmap/utilite/UTimer.h>
 #include <QtCore/QMetaType>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -84,7 +85,7 @@ CameraViewer::CameraViewer(QWidget * parent, const ParametersMap & parameters) :
 	showScanCheckbox_->setChecked(true);
 
 	markerCheckbox_ = new QCheckBox("Detect markers", this);
-#ifdef HAVE_OPENCV_ARUCO
+#if ((CV_MAJOR_VERSION > 4 || (CV_MAJOR_VERSION==4 && CV_MINOR_VERSION >=7)) && defined(HAVE_OPENCV_OBJDETECT)) || defined(HAVE_OPENCV_ARUCO) || defined(RTABMAP_APRILTAG)
 	markerCheckbox_->setEnabled(true);
 	markerDetector_ = new MarkerDetector(parameters);
 #else
@@ -151,6 +152,7 @@ void CameraViewer::showImage(const rtabmap::SensorData & data)
 
 	imageView_->setVisible(!left.empty() || !left.empty());
 	std::map<int, MarkerInfo> detections;
+	UTimer markerDetectionTime;
 	if(!left.empty())
 	{
 		std::vector<CameraModel> models;
@@ -165,12 +167,23 @@ void CameraViewer::showImage(const rtabmap::SensorData & data)
 				}
 			}
 		}
+		else
+		{
+			_landmarksSize.clear();
+		}
 			
 		if(!models.empty() && models[0].isValidForProjection())
 		{
 			cv::Mat imageWithDetections;
-			detections = markerDetector_->detect(left, models, depthOrRight, std::map<int, float>(), &imageWithDetections);
+			cv::Mat depth = (depthOrRight.type()==CV_16UC1 || depthOrRight.type()==CV_32FC1) ? depthOrRight : cv::Mat();
+			detections = markerDetector_->detect(left, models, depth, _landmarksSize, &imageWithDetections);
 			imageView_->setImage(uCvMat2QImage(imageWithDetections));
+			for(std::map<int, MarkerInfo>::iterator iter=detections.begin(); iter!=detections.end(); ++iter)
+			{
+				if(iter->second.length() > 0.0f) {
+					_landmarksSize.insert(std::make_pair(iter->first, iter->second.length()));
+				}
+			}
 		}
 		else
 		{
@@ -184,6 +197,10 @@ void CameraViewer::showImage(const rtabmap::SensorData & data)
 		sizes.append(QString(" Depth=%1x%2").arg(depthOrRight.cols).arg(depthOrRight.rows));
 	}
 	sizes.append(QString(" FPS capture=%1 render=%2").arg(lastCapturePeriod_>0.0?(int)round(1.0/lastCapturePeriod_):0).arg((int)round(1.0/fpsTimer_.restart()*1000)));
+	if(markerCheckbox_->isEnabled() && markerCheckbox_->isChecked())
+	{
+		sizes.append(QString(" Marker=%1ms").arg(int(markerDetectionTime.ticks()*1000)));
+	}
 	imageSizeLabel_->setText(sizes);
 
 	if(!depthOrRight.empty() &&
@@ -236,7 +253,7 @@ void CameraViewer::showImage(const rtabmap::SensorData & data)
 #if PCL_VERSION_COMPARE(>=, 1, 7, 2)
 					cloudView_->addOrUpdateCoordinate(uFormat("landmark_%d", iter->first), iter->second.pose(), iter->second.length(), false);
 #endif
-					std::string num = uNumber2Str(iter->first);
+					std::string num = uFormat("%d (%.1f cm)", iter->first, iter->second.length()*100.0f);
 					cloudView_->addOrUpdateText(
 							std::string("landmark_str_") + num,
 							num,

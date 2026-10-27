@@ -57,6 +57,7 @@ DBReader::DBReader(const std::string & databasePath,
 				   int stopMapId,
 				   bool priorsIgnored,
 				   bool imuIgnored,
+				   bool intermediateNodesAreNormalNodes,
 				   const std::vector<Transform> & cameraLocalTransformOverrides) :
 	Camera(frameRate),
 	_paths(uSplit(databasePath, ';')),
@@ -67,6 +68,7 @@ DBReader::DBReader(const std::string & databasePath,
 	_stopId(stopId),
 	_cameraIndices(cameraIndices),
 	_intermediateNodesIgnored(intermediateNodesIgnored),
+	_intermediateNodesAreNormalNodes(intermediateNodesAreNormalNodes),
 	_landmarksIgnored(landmarksIgnored),
 	_featuresIgnored(featuresIgnored),
 	_priorsIgnored(priorsIgnored),
@@ -99,6 +101,7 @@ DBReader::DBReader(const std::list<std::string> & databasePaths,
 				   int stopMapId,
 				   bool priorsIgnored,
 				   bool imuIgnored,
+				   bool intermediateNodesAreNormalNodes,
 				   const std::vector<Transform> & cameraLocalTransformOverrides) :
 	Camera(frameRate),
    _paths(databasePaths),
@@ -109,6 +112,7 @@ DBReader::DBReader(const std::list<std::string> & databasePaths,
 	_stopId(stopId),
 	_cameraIndices(cameraIndices),
 	_intermediateNodesIgnored(intermediateNodesIgnored),
+	_intermediateNodesAreNormalNodes(intermediateNodesAreNormalNodes),
 	_landmarksIgnored(landmarksIgnored),
 	_featuresIgnored(featuresIgnored),
 	_priorsIgnored(priorsIgnored),
@@ -144,9 +148,8 @@ void DBReader::checkArguments()
 			_cameraIndices.size() != _cameraLocalTransformOverrides.size())
 		{
 			UERROR("Camera local transform overrides (%d) are not the same size than the camera indices (%d). The overrides are ignored.",
-				_cameraLocalTransformOverrides.size(),
-				_cameraIndices.size()
-			);
+				(int)_cameraLocalTransformOverrides.size(),
+				(int)_cameraIndices.size());
 			_cameraLocalTransformOverrides.clear();
 		}
 		for(size_t i=0; i<_cameraLocalTransformOverrides.size(); ++i)
@@ -621,9 +624,8 @@ SensorData DBReader::getNextData(SensorCaptureInfo * info)
 				_cameraIndices.size() != _cameraLocalTransformOverrides.size())
 			{
 				UERROR("Camera local transform overrides (%d) are not the same size than the camera indices (%d). The overrides are ignored.",
-					_cameraLocalTransformOverrides.size(),
-					_cameraIndices.size()
-				);
+					(int)_cameraLocalTransformOverrides.size(),
+					(int)_cameraIndices.size());
 				_cameraLocalTransformOverrides.clear();
 			}
 
@@ -639,7 +641,7 @@ SensorData DBReader::getNextData(SensorCaptureInfo * info)
 				for(size_t i=0; i<_cameraIndices.size(); ++i)
 				{
 					UASSERT_MSG(_cameraIndices[i] < dbModels.size(), uFormat("DBReader: camera index %ld is not valid (should be between 0 and %ld)",
-						_cameraIndices[i], dbModels.size()-1).c_str());
+						(long)_cameraIndices[i], dbModels.size()-1).c_str());
 
 					int addedCameras = std::max(combinedModels.size(), combinedStereoModels.size());
 
@@ -749,7 +751,7 @@ SensorData DBReader::getNextData(SensorCaptureInfo * info)
 					data.setStereoCameraModels(combinedStereoModels);
 				}
 			}
-			data.setId(seq);
+			data.setId(!_intermediateNodesAreNormalNodes && s->getWeight()==-1 ? -1 : seq);
 			data.setStamp(s->getStamp());
 			data.setGroundTruth(s->getGroundTruthPose());
 			if(!globalPose.isNull())

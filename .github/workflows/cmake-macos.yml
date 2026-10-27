@@ -1,0 +1,206 @@
+name: CMake-MacOS
+
+# No paths filters on the triggers: the `changes` job below filters pushes and
+# pull requests, so the required check still reports (one that never does
+# blocks the PR) and the path list lives in one place.
+on:
+  push:
+    branches: 
+      - master
+  pull_request:
+    branches:
+      - '**'
+  merge_group:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Required checks must always report, so pushes and pull requests are
+  # filtered here instead of on the trigger: jobs not affected by the
+  # change are skipped, which counts as passing, and only macos-ci below
+  # is required by the ruleset. The merge queue and dispatches always build.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant == 'true' || (github.event_name != 'pull_request' && github.event_name != 'push') }}
+    steps:
+      # Pull requests are diffed through the API; a push needs the git history.
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          # Every changed file must match all patterns, i.e. anything but these.
+          predicate-quantifier: every
+          filters: |
+            relevant:
+              - '**'
+              - '!.github/workflows/android.yml'
+              - '!.github/workflows/ios.yml'
+              - '!app/android/**'
+              - '!app/ios/**'
+              - '!docker/noble/android/**'
+
+  build:
+    name: ${{ matrix.build_name }}
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        build_name: [macos-sequoia-apple-silicon, macos-tahoe-apple-silicon, macos-tahoe-apple-silicon-cv5]
+        include:
+        # macos-sequoia-intel temporarily disabled. Had some g2o optimizer issues.
+        #- build_name: macos-sequoia-intel
+        #  os: macos-15-intel
+        #  cv: opencv@4
+        - build_name: macos-sequoia-apple-silicon
+          os: macos-15
+          cv: opencv@4
+        # - build_name: macos-tahoe-intel
+        #   os: macos-26-intel
+        #   cv: opencv@4
+        - build_name: macos-tahoe-apple-silicon
+          os: macos-26
+          cv: opencv@4
+        # - build_name: macos-tahoe-intel-cv5
+        #   os: macos-26-intel
+        #   cv: opencv
+        - build_name: macos-tahoe-apple-silicon-cv5
+          os: macos-26
+          cv: opencv
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Restore test data
+      id: cache-testdata
+      uses: actions/cache@v4
+      with:
+        # SQLite DBs are binary-portable -> share the cache across
+        # linux / macos / windows. Key omits runner.os on purpose so all
+        # three OSes hit the same entry.
+        path: data/tests/*.db
+        key: testdata-${{ hashFiles('data/tests/manifest.txt') }}
+
+    - name: Fetch test data
+      if: steps.cache-testdata.outputs.cache-hit != 'true'
+      shell: bash
+      run: bash scripts/fetch_test_data.sh
+
+    - name: Install Brew Dependencies
+      run: |
+        # Update brew and install from Brewfile if present, or specific packages
+        brew install pcl octomap pdal yaml-cpp librealsense libfreenect libusb zlib libomp suite-sparse ceres-solver ${{ matrix.cv }}
+
+    - name: Install Source Dependencies
+      # Build (and per-dependency cache) the source-only deps not available from
+      # Homebrew, then install them into /usr/local. See the composite action.
+      uses: ./.github/actions/install-macos-source-deps
+      with:
+        os: ${{ matrix.os }}
+        build_type: ${{ env.BUILD_TYPE }}
+
+    - name: Configure CMake
+      run: |
+        # Apple clang has no built-in OpenMP; point find_package(OpenMP) at
+        # Homebrew's keg-only libomp so PCL/g2o/rtabmap enable OpenMP instead of
+        # repeatedly logging "Could NOT find OpenMP".
+        LIBOMP=$(brew --prefix libomp)
+        cmake -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DBUILD_TESTING=ON \
+          -DBUILD_AS_BUNDLE=ON \
+          -DWITH_ORBBEC_SDK=ON \
+          -DWITH_DEPTHAI=ON \
+          -DWITH_CERES=ON \
+          -DOpenMP_C_FLAGS="-Xclang -fopenmp -I$LIBOMP/include" \
+          -DOpenMP_C_LIB_NAMES=omp \
+          -DOpenMP_CXX_FLAGS="-Xclang -fopenmp -I$LIBOMP/include" \
+          -DOpenMP_CXX_LIB_NAMES=omp \
+          -DOpenMP_omp_LIBRARY="$LIBOMP/lib/libomp.dylib"
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+    - name: Info
+      working-directory: ${{github.workspace}}/build/bin
+      run: |
+        ./rtabmap-console --version
+
+    - name: Build MacOS Package
+      run: |
+        cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }} --target package
+
+    - name: Upload RTABMap Artifacts (DMG)
+      uses: actions/upload-artifact@v4
+      with:
+        name: RTABMap-Binaries-${{ matrix.build_name }}-nonsigned-zip
+        path: |
+          build/RTABMap-*.dmg
+        compression-level: 0
+        if-no-files-found: warn
+        retention-days: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && 1 || 90 }}
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      # PYTHONNOUSERSITE=1: prevent the embedded Python interpreter from
+      # loading numpy / other site-packages from the user's site that were
+      # compiled against a different ABI than the build-time Python.
+      env:
+        PYTHONNOUSERSITE: 1
+      run: |
+        ctest -C ${{env.BUILD_TYPE}} -V -LE performance
+
+    # A ctest SEGFAULT is reported as just "SEGFAULT" with no backtrace, which
+    # makes a crash inside a long integration test invisible -- the log simply
+    # stops mid-test. macOS's ReportCrash writes a symbolized .ips report for
+    # every crashed process, so surface any that appeared during this job.
+    - name: Dump macOS crash reports on failure
+      if: failure()
+      run: |
+        # ReportCrash can lag the process death by a few seconds.
+        sleep 20
+        found=0
+        for d in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
+          [ -d "$d" ] || continue
+          while IFS= read -r f; do
+            found=1
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done < <(find "$d" -type f \( -name '*.ips' -o -name '*.crash' \) -mtime -1 2>/dev/null | sort)
+        done
+        if [ "$found" = 0 ]; then
+          echo "No crash reports found -- the job may have failed without a crash."
+        fi
+
+    - name: Upload ctest log on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ctest-log-${{ matrix.build_name }}
+        path: build/Testing/Temporary/LastTest.log
+        if-no-files-found: warn
+        retention-days: 7
+
+  # The only check of this workflow the ruleset requires: a matrix job skipped
+  # by `if` does not report its per-entry names, so those cannot be required.
+  macos-ci:
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

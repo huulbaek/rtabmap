@@ -36,6 +36,23 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace rtabmap
 {
 
+namespace {
+bool isOccupancyGridLayerFormatSupported(const cv::Mat & layer)
+{
+	if(layer.empty())
+	{
+		return true;
+	}
+	return layer.type() == CV_32FC2 ||
+			layer.type() == CV_32FC3 ||
+			layer.type() == CV_32FC(4) ||
+			layer.type() == CV_32FC(5) ||
+			layer.type() == CV_32FC(6) ||
+			layer.type() == CV_32FC(7) ||
+			(layer.type() == CV_8UC1 && layer.rows == 1);
+}
+} // namespace
+
 // empty constructor
 SensorData::SensorData() :
 		_id(0),
@@ -86,6 +103,23 @@ SensorData::SensorData(
 		_cellSize(0.0f)
 {
 	setRGBDImage(rgb, depth, cameraModel);
+	setUserData(userData);
+}
+
+// RGB-D constructor + Depth confidence
+SensorData::SensorData(
+		const cv::Mat & rgb,
+		const cv::Mat & depth,
+		const cv::Mat & depth_confidence,
+		const CameraModel & cameraModel,
+		int id,
+		double stamp,
+		const cv::Mat & userData) :
+		_id(id),
+		_stamp(stamp),
+		_cellSize(0.0f)
+{
+	setRGBDImage(rgb, depth, depth_confidence, cameraModel);
 	setUserData(userData);
 }
 
@@ -279,6 +313,24 @@ SensorData::~SensorData()
 {
 }
 
+bool SensorData::keepCameraModel(
+		const CameraModel & model,
+		const cv::Mat & rgb,
+		const cv::Mat & depth,
+		bool clearPreviousData) const
+{
+	// An invalid model without any image is only a placeholder (e.g., scan-only data
+	// created with CameraModel()): it is not kept, so that cameraModels() is empty when
+	// there is no camera. An invalid model with an image is kept: images can be used
+	// without calibration, and they are split per camera model.
+	return model.isValidForProjection() ||
+			!rgb.empty() ||
+			!depth.empty() ||
+			(!clearPreviousData && (
+					!_imageRaw.empty() || !_imageCompressed.empty() ||
+					!_depthOrRightRaw.empty() || !_depthOrRightCompressed.empty()));
+}
+
 void SensorData::setRGBDImage(
 		const cv::Mat & rgb,
 		const cv::Mat & depth,
@@ -286,7 +338,10 @@ void SensorData::setRGBDImage(
 		bool clearPreviousData)
 {
 	std::vector<CameraModel> models;
-	models.push_back(model);
+	if(keepCameraModel(model, rgb, depth, clearPreviousData))
+	{
+		models.push_back(model);
+	}
 	setRGBDImage(rgb, depth, models, clearPreviousData);
 }
 void SensorData::setRGBDImage(
@@ -297,7 +352,10 @@ void SensorData::setRGBDImage(
 	bool clearPreviousData)
 {
 	std::vector<CameraModel> models;
-	models.push_back(model);
+	if(keepCameraModel(model, rgb, depth, clearPreviousData))
+	{
+		models.push_back(model);
+	}
 	setRGBDImage(rgb, depth, depthConfidence, models, clearPreviousData);
 }
 void SensorData::setRGBDImage(
@@ -534,7 +592,7 @@ void SensorData::setUserData(const cv::Mat & userData, bool clearPreviousData)
 	else
 	{
 		_userDataRaw = userData;
-		if(!userData.empty())
+		if(!userData.empty() && _userDataCompressed.empty())
 		{
 			_userDataCompressed = compressData2(userData);
 		}
@@ -553,7 +611,7 @@ void SensorData::setOccupancyGrid(
 	   (!obstacles.empty() && (!_obstacleCellsCompressed.empty() || !_obstacleCellsRaw.empty())) ||
 	   (!empty.empty() && (!_emptyCellsCompressed.empty() || !_emptyCellsRaw.empty())))
 	{
-		UWARN("Occupancy grid cannot be overwritten! id=%d, Set occupancy grid of %d to null "
+		UWARN("Occupancy grid cannot be overwritten! Set occupancy grid of %d to null "
 			  "before setting a new one.", this->id());
 		return;
 	}
@@ -564,6 +622,19 @@ void SensorData::setOccupancyGrid(
 	_obstacleCellsCompressed = cv::Mat();
 	_emptyCellsRaw = cv::Mat();
 	_emptyCellsCompressed = cv::Mat();
+
+	if(!ground.empty() && !isOccupancyGridLayerFormatSupported(ground))
+	{
+		UFATAL("Unsupported local occupancy grid format for ground cells: OpenCV type=%d size=%dx%d", ground.type(), ground.cols, ground.rows);
+	}
+	if(!obstacles.empty() && !isOccupancyGridLayerFormatSupported(obstacles))
+	{
+		UFATAL("Unsupported local occupancy grid format for obstacle cells: OpenCV type=%d size=%dx%d", obstacles.type(), obstacles.cols, obstacles.rows);
+	}
+	if(!empty.empty() && !isOccupancyGridLayerFormatSupported(empty))
+	{
+		UFATAL("Unsupported local occupancy grid format for empty cells: OpenCV type=%d size=%dx%d", empty.type(), empty.cols, empty.rows);
+	}
 
 	CompressionThread ctGround(ground);
 	CompressionThread ctObstacles(obstacles);
@@ -576,7 +647,7 @@ void SensorData::setOccupancyGrid(
 			_groundCellsRaw = ground;
 			ctGround.start();
 		}
-		else if(ground.type() == CV_8UC1)
+		else // CV_8UC1 && rows == 1
 		{
 			_groundCellsCompressed = ground;
 		}
@@ -588,7 +659,7 @@ void SensorData::setOccupancyGrid(
 			_obstacleCellsRaw = obstacles;
 			ctObstacles.start();
 		}
-		else if(obstacles.type() == CV_8UC1)
+		else // CV_8UC1 && rows == 1
 		{
 			_obstacleCellsCompressed = obstacles;
 		}
@@ -600,7 +671,7 @@ void SensorData::setOccupancyGrid(
 			_emptyCellsRaw = empty;
 			ctEmpty.start();
 		}
-		else if(empty.type() == CV_8UC1)
+		else // CV_8UC1 && rows == 1
 		{
 			_emptyCellsCompressed = empty;
 		}
@@ -952,6 +1023,22 @@ void SensorData::setFeatures(const std::vector<cv::KeyPoint> & keypoints, const 
 	_descriptors = descriptors;
 }
 
+void SensorData::setIMU(const IMU & imu)
+{
+	UASSERT(
+		uIsFinite(imu.orientation()[0]) && 
+		uIsFinite(imu.orientation()[1]) && 
+		uIsFinite(imu.orientation()[2]) && 
+		uIsFinite(imu.orientation()[3]) &&
+		uIsFinite(imu.angularVelocity()[0]) && 
+		uIsFinite(imu.angularVelocity()[1]) && 
+		uIsFinite(imu.angularVelocity()[2]) && 
+		uIsFinite(imu.linearAcceleration()[0]) &&
+		uIsFinite(imu.linearAcceleration()[1]) &&
+		uIsFinite(imu.linearAcceleration()[2]));
+	imu_ = imu;
+}
+
 unsigned long SensorData::getMemoryUsed() const // Return memory usage in Bytes
 {
 	return sizeof(SensorData) +
@@ -976,7 +1063,7 @@ unsigned long SensorData::getMemoryUsed() const // Return memory usage in Bytes
 			(_descriptors.empty()?0:_descriptors.total()*_descriptors.elemSize());
 }
 
-void SensorData::clearCompressedData(bool images, bool scan, bool userData)
+void SensorData::clearCompressedData(bool images, bool scan, bool userData, bool occupancyGrid)
 {
 	if(images)
 	{
@@ -992,14 +1079,32 @@ void SensorData::clearCompressedData(bool images, bool scan, bool userData)
 	{
 		_userDataCompressed=cv::Mat();
 	}
+	if(occupancyGrid)
+	{
+		_groundCellsCompressed=cv::Mat();
+		_emptyCellsCompressed=cv::Mat();
+		_obstacleCellsCompressed=cv::Mat();
+		
+		if( _groundCellsCompressed.empty()  && _groundCellsRaw.empty() &&
+			_obstacleCellsCompressed.empty()  && _obstacleCellsRaw.empty() &&
+			_emptyCellsCompressed.empty()  && _emptyCellsRaw.empty())
+		{
+			_cellSize = 0.0f;
+			_viewPoint = cv::Point3f();
+		}
+	}
 }
-void SensorData::clearRawData(bool images, bool scan, bool userData)
+void SensorData::clearRawData(bool images, bool scan, bool userData, bool occupancyGrid)
 {
 	if(images)
 	{
 		_imageRaw=cv::Mat();
 		_depthOrRightRaw=cv::Mat();
 		_depthConfidenceRaw=cv::Mat();
+#ifdef HAVE_OPENCV_CUDEV
+		_imageRawGpu = cv::cuda::GpuMat();
+		_depthOrRightRawGpu = cv::cuda::GpuMat();
+#endif
 	}
 	if(scan)
 	{
@@ -1009,10 +1114,24 @@ void SensorData::clearRawData(bool images, bool scan, bool userData)
 	{
 		_userDataRaw=cv::Mat();
 	}
+	if(occupancyGrid)
+	{
+		_groundCellsRaw=cv::Mat();
+		_emptyCellsRaw=cv::Mat();
+		_obstacleCellsRaw=cv::Mat();
+
+		if( _groundCellsCompressed.empty()  && _groundCellsRaw.empty() &&
+			_obstacleCellsCompressed.empty()  && _obstacleCellsRaw.empty() &&
+			_emptyCellsCompressed.empty()  && _emptyCellsRaw.empty())
+		{
+			_cellSize = 0.0f;
+			_viewPoint = cv::Point3f();
+		}
+	}
 }
 
 
-bool SensorData::isPointVisibleFromCameras(const cv::Point3f & pt) const
+int SensorData::isPointVisibleFromCameras(const cv::Point3f & pt) const
 {
 	if(_cameraModels.size() >= 1)
 	{
@@ -1023,13 +1142,12 @@ bool SensorData::isPointVisibleFromCameras(const cv::Point3f & pt) const
 				cv::Point3f ptInCameraFrame = util3d::transformPoint(pt, _cameraModels[i].localTransform().inverse());
 				if(ptInCameraFrame.z > 0.0f)
 				{
-					int borderWidth = int(float(_cameraModels[i].imageWidth())* 0.2);
 					int u, v;
 					_cameraModels[i].reproject(ptInCameraFrame.x, ptInCameraFrame.y, ptInCameraFrame.z, u, v);
-					if(uIsInBounds(u, borderWidth, _cameraModels[i].imageWidth()-2*borderWidth) &&
-					   uIsInBounds(v, borderWidth, _cameraModels[i].imageHeight()-2*borderWidth))
+					if(uIsInBounds(u, 0, _cameraModels[i].imageWidth()) &&
+					   uIsInBounds(v, 0, _cameraModels[i].imageHeight()))
 					{
-						return true;
+						return i;
 					}
 				}
 			}
@@ -1049,7 +1167,7 @@ bool SensorData::isPointVisibleFromCameras(const cv::Point3f & pt) const
 					if(uIsInBounds(u, 0, _stereoCameraModels[i].left().imageWidth()) &&
 					   uIsInBounds(v, 0, _stereoCameraModels[i].left().imageHeight()))
 					{
-						return true;
+						return i;
 					}
 				}
 			}
@@ -1059,7 +1177,7 @@ bool SensorData::isPointVisibleFromCameras(const cv::Point3f & pt) const
 	{
 		UERROR("no valid camera model!");
 	}
-	return false;
+	return -1;
 }
 
 } // namespace rtabmap

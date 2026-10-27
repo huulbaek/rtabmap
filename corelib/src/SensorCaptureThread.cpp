@@ -39,8 +39,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "rtabmap/core/IMUFilter.h"
 #include "rtabmap/core/Features2d.h"
 #include "rtabmap/core/clams/discrete_depth_distortion_model.h"
-#include <opencv2/imgproc/types_c.h>
-#include <opencv2/stitching/detail/exposure_compensate.hpp>
 #include <rtabmap/utilite/UTimer.h>
 #include <rtabmap/utilite/ULogger.h>
 #include <rtabmap/utilite/UStl.h>
@@ -114,7 +112,6 @@ SensorCaptureThread::SensorCaptureThread(
 				_camera(camera),
 				_odomSensor(odomSensor),
 				_lidar(lidar),
-				_extrinsicsOdomToCamera(extrinsics * CameraModel::opticalRotation()),
 				_odomAsGt(false),
 				_poseTimeOffset(poseTimeOffset),
 				_poseScaleFactor(poseScaleFactor),
@@ -153,9 +150,13 @@ SensorCaptureThread::SensorCaptureThread(
 	{
 		if(_camera)
 		{
-			if(_odomSensor == _camera && _extrinsicsOdomToCamera.isNull())
+			if(_odomSensor == _camera && extrinsics.isNull())
 			{
 				_extrinsicsOdomToCamera.setIdentity();
+			}
+			else
+			{
+				_extrinsicsOdomToCamera = extrinsics * CameraModel::opticalRotation();
 			}
 			UASSERT(!_extrinsicsOdomToCamera.isNull());
 			UDEBUG("_extrinsicsOdomToCamera=%s", _extrinsicsOdomToCamera.prettyPrint().c_str());
@@ -492,20 +493,26 @@ void SensorCaptureThread::mainLoop()
 					}
 				}
 
-				// Adjust local transform of the camera based on the pose frame
+				// Adjust local transform of the camera(s) based on the pose frame. The correction
+				// and odom->camera extrinsics are frame-level, so apply the same prefix to each
+				// camera while keeping its own local transform (multi-camera supported).
 				if(!data.cameraModels().empty())
 				{
-					UASSERT(data.cameraModels().size()==1);
-					CameraModel model = data.cameraModels()[0];
-					model.setLocalTransform(cameraCorrection*_extrinsicsOdomToCamera);
-					data.setCameraModel(model);
+					std::vector<CameraModel> models = data.cameraModels();
+					for(size_t i=0; i<models.size(); ++i)
+					{
+						models[i].setLocalTransform(cameraCorrection*_extrinsicsOdomToCamera*models[i].localTransform());
+					}
+					data.setCameraModels(models);
 				}
 				else if(!data.stereoCameraModels().empty())
 				{
-					UASSERT(data.stereoCameraModels().size()==1);
-					StereoCameraModel model = data.stereoCameraModels()[0];
-					model.setLocalTransform(cameraCorrection*_extrinsicsOdomToCamera);
-					data.setStereoCameraModel(model);
+					std::vector<StereoCameraModel> models = data.stereoCameraModels();
+					for(size_t i=0; i<models.size(); ++i)
+					{
+						models[i].setLocalTransform(cameraCorrection*_extrinsicsOdomToCamera*models[i].localTransform());
+					}
+					data.setStereoCameraModels(models);
 				}
 			}
 
@@ -530,15 +537,21 @@ void SensorCaptureThread::mainLoop()
 		info.odomPose.setNull();
 	}
 
-	if(!data.imageCompressed().empty() || !data.imageRaw().empty() || !data.laserScanRaw().empty() || (dynamic_cast<DBReader*>(_camera) != 0 && data.id()>0)) // intermediate nodes could not have image set
+	if(this->isKilled())
+	{
+		// A kill was requested (e.g. while we were blocked capturing this frame): don't
+		// publish anything so we never deliver events to handlers that are being torn down.
+	}
+	else if(!data.imageCompressed().empty() || !data.imageRaw().empty() || !data.laserScanRaw().empty() || (dynamic_cast<DBReader*>(_camera) != 0 && data.id()>0)) // intermediate nodes could not have image set
 	{
 		postUpdate(&data, &info);
 		info.cameraName = _lidar?_lidar->getSerial():_camera->getSerial();
 		info.timeTotal = totalTime.ticks();
 		this->post(new SensorEvent(data, info));
 	}
-	else if(!this->isKilled())
+	else
 	{
+		// Not killed but no data: end of stream. Signal consumers once, then stop.
 		UWARN("no more data...");
 		this->kill();
 		this->post(new SensorEvent());
@@ -686,7 +699,7 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 				kpts[i].pt.x /= _imageDecimation;
 				kpts[i].pt.y /= _imageDecimation;
 				kpts[i].size /= _imageDecimation;
-				kpts[i].octave -= log2value;
+				kpts[i].octave = std::max(0, int(kpts[i].octave - log2value));
 			}
 			data.setFeatures(kpts, data.keypoints3D(), data.descriptors());
 		}
@@ -742,11 +755,11 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 			else if(data.imageRaw().type() == CV_8UC3)
 			{
 				cv::Mat channels[3];
-				cv::cvtColor(data.imageRaw(), image, CV_BGR2YCrCb);
+				cv::cvtColor(data.imageRaw(), image, cv::COLOR_BGR2YCrCb);
 				cv::split(image, channels);
 				cv::equalizeHist(channels[0], channels[0]);
 				cv::merge(channels, 3, image);
-				cv::cvtColor(image, image, CV_YCrCb2BGR);
+				cv::cvtColor(image, image, cv::COLOR_YCrCb2BGR);
 			}
 			if(!data.depthRaw().empty())
 			{
@@ -762,11 +775,11 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 				else if(data.rightRaw().type() == CV_8UC3)
 				{
 					cv::Mat channels[3];
-					cv::cvtColor(data.rightRaw(), right, CV_BGR2YCrCb);
+					cv::cvtColor(data.rightRaw(), right, cv::COLOR_BGR2YCrCb);
 					cv::split(right, channels);
 					cv::equalizeHist(channels[0], channels[0]);
 					cv::merge(channels, 3, right);
-					cv::cvtColor(right, right, CV_YCrCb2BGR);
+					cv::cvtColor(right, right, cv::COLOR_YCrCb2BGR);
 				}
 				data.setStereoImage(image, right, data.stereoCameraModels()[0]);
 			}
@@ -781,11 +794,11 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 			else if(data.imageRaw().type() == CV_8UC3)
 			{
 				cv::Mat channels[3];
-				cv::cvtColor(data.imageRaw(), image, CV_BGR2YCrCb);
+				cv::cvtColor(data.imageRaw(), image, cv::COLOR_BGR2YCrCb);
 				cv::split(image, channels);
 				clahe->apply(channels[0], channels[0]);
 				cv::merge(channels, 3, image);
-				cv::cvtColor(image, image, CV_YCrCb2BGR);
+				cv::cvtColor(image, image, cv::COLOR_YCrCb2BGR);
 			}
 			if(!data.depthRaw().empty())
 			{
@@ -801,11 +814,11 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 				else if(data.rightRaw().type() == CV_8UC3)
 				{
 					cv::Mat channels[3];
-					cv::cvtColor(data.rightRaw(), right, CV_BGR2YCrCb);
+					cv::cvtColor(data.rightRaw(), right, cv::COLOR_BGR2YCrCb);
 					cv::split(right, channels);
 					clahe->apply(channels[0], channels[0]);
 					cv::merge(channels, 3, right);
-					cv::cvtColor(right, right, CV_YCrCb2BGR);
+					cv::cvtColor(right, right, cv::COLOR_YCrCb2BGR);
 				}
 				data.setStereoImage(image, right, data.stereoCameraModels()[0]);
 			}
@@ -817,27 +830,15 @@ void SensorCaptureThread::postUpdate(SensorData * dataPtr, SensorCaptureInfo * i
 	{
 		if(data.stereoCameraModels().size()==1)
 		{
-#if CV_MAJOR_VERSION < 3
-			UWARN("Stereo exposure compensation not implemented for OpenCV version under 3.");
-#else
 			UDEBUG("");
 			UTimer timer;
-			cv::Ptr<cv::detail::ExposureCompensator> compensator = cv::detail::ExposureCompensator::createDefault(cv::detail::ExposureCompensator::GAIN);
-			std::vector<cv::Point> topLeftCorners(2, cv::Point(0,0));
-			std::vector<cv::UMat> images;
-			std::vector<cv::UMat> masks(2, cv::UMat(data.imageRaw().size(), CV_8UC1,  cv::Scalar(255)));
-			images.push_back(data.imageRaw().getUMat(cv::ACCESS_READ));
-			images.push_back(data.rightRaw().getUMat(cv::ACCESS_READ));
-			compensator->feed(topLeftCorners, images, masks);
-			cv::Mat imgLeft = data.imageRaw().clone();
-			compensator->apply(0, cv::Point(0,0), imgLeft, masks[0]);
-			cv::Mat imgRight = data.rightRaw().clone();
-			compensator->apply(1, cv::Point(0,0), imgRight, masks[1]);
-			data.setStereoImage(imgLeft, imgRight, data.stereoCameraModels()[0]);
-			cv::detail::GainCompensator * gainCompensator = (cv::detail::GainCompensator*)compensator.get();
-			UDEBUG("gains = %f %f ", gainCompensator->gains()[0], gainCompensator->gains()[1]);
+			cv::Mat imgLeft;
+			cv::Mat imgRight;
+			if(util2d::stereoExposureCompensation(data.imageRaw(), data.rightRaw(), imgLeft, imgRight))
+			{
+				data.setStereoImage(imgLeft, imgRight, data.stereoCameraModels()[0]);
+			}
 			if(info) info->timeStereoExposureCompensation = timer.ticks();
-#endif
 		}
 		else
 		{
