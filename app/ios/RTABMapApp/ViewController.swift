@@ -2438,7 +2438,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
                     do {
                         // Copy manual photos into the export dir if enabled and not LAZ export.
                         let includePhotos = UserDefaults.standard.object(forKey: "PhotoIncludeInExport") as? Bool ?? true
-                        if includePhotos, let photosFolder = ManualPhotoStore.shared.currentSessionURL(),
+                        if includePhotos, !isLAZ, let photosFolder = ManualPhotoStore.shared.currentSessionURL(),
                            FileManager.default.fileExists(atPath: photosFolder.path) {
                             let destination = exportDir.appendingPathComponent("manual_photos")
                             do {
