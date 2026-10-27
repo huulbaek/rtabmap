@@ -21,10 +21,18 @@ SET(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake_modules")
 # VERSION
 #######################
 SET(RTABMAP_MAJOR_VERSION 0)
-SET(RTABMAP_MINOR_VERSION 23)
-SET(RTABMAP_PATCH_VERSION 5)
+SET(RTABMAP_MINOR_VERSION 24)
+SET(RTABMAP_PATCH_VERSION 2)
 SET(RTABMAP_VERSION
   ${RTABMAP_MAJOR_VERSION}.${RTABMAP_MINOR_VERSION}.${RTABMAP_PATCH_VERSION})
+
+# Make sure we have valid version so that RTABMAP_VERSION_COMPARE logic in Version.h works
+IF(RTABMAP_MINOR_VERSION GREATER 99)
+MESSAGE(FATAL_ERROR "RTABMAP_MINOR_VERSION must be < 100, bump major version and restart minor to 0!")
+ENDIF()
+IF(RTABMAP_PATCH_VERSION GREATER 99)
+MESSAGE(FATAL_ERROR "RTABMAP_PATCH_VERSION must be < 100, bump minor version and restart patch to 0!")
+ENDIF()
   
 SET(PROJECT_VERSION "${RTABMAP_VERSION}")
 
@@ -55,10 +63,6 @@ ELSE()
     option(FLANN_KDTREE_MEM_OPT  "Disable multi-threaded FLANN kd-tree to minimize memory allocations"   ON)
 ENDIF()
 
-IF(FLANN_KDTREE_MEM_OPT)
-    ADD_DEFINITIONS("-DFLANN_KDTREE_MEM_OPT")
-ENDIF(FLANN_KDTREE_MEM_OPT)
-
 IF(WIN32 AND NOT MINGW)
     ADD_DEFINITIONS("-DNOMINMAX")
     ADD_DEFINITIONS("-wd4100 -wd4127 -wd4150 -wd4191 -wd4242 -wd4244 -wd4251 -wd4305 -wd4365 -wd4512 -wd4514 -wd4548 -wd4571 -wd4619 -wd4625 -wd4626 -wd4628 -wd4668 -wd4710 -wd4711 -wd4738 -wd4820 -wd4946 -wd4986")
@@ -76,6 +80,11 @@ endif()
 # To suppress g2o related opengl warning
 if(POLICY CMP0072)
     cmake_policy(SET CMP0072 NEW)
+endif()
+# Timestamp the files extracted from a FetchContent URL download at extraction
+# time, so a changed URL actually triggers a rebuild of what depends on them.
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
 endif()
 
 IF(MINGW)
@@ -159,6 +168,72 @@ ENDIF(APPLE OR WIN32)
 OPTION(BUILD_APP "Build main application" ON)
 OPTION(BUILD_TOOLS "Build tools" ON)
 OPTION(BUILD_EXAMPLES "Build examples" ON)
+# Off by default: it downloads the Doxygen theme at configure time, which an
+# ordinary build has no reason to need. Set by docs-report.sh.
+OPTION(BUILD_DOCUMENTATION "Prepare the API documentation build (downloads the Doxygen theme)" OFF)
+
+# The unit tests are host executables run by ctest, which can't be done from a
+# cross-compiled Android/iOS build.
+if(ANDROID OR IOS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+   set(BUILD_TESTING OFF CACHE BOOL "Build the testing tree." FORCE)
+endif()
+
+# Performance tests are benchmarks: they report times, memory and recall
+# instead of asserting on them, as those depend on the machine. They are built
+# by default so they cannot rot, but are labelled "performance" so that a run
+# opts in with `ctest -L performance` and CI opts out with `ctest -LE
+# performance`. They can also be run directly, e.g. bin/test_flann_index_perf.
+OPTION(BUILD_PERF_TESTS "Build the performance tests (see ctest -L performance)" ON)
+
+include(CTest)
+if(BUILD_TESTING)
+   # Add GTest using FetchContent
+   # The fetched googletest must not be installed into the install prefix: it
+   # would shadow the GTest of other projects sharing the prefix and break
+   # their builds (see https://github.com/introlab/rtabmap/issues/1812).
+   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+   include(FetchContent)
+   FetchContent_Declare(
+       googletest
+       URL https://github.com/google/googletest/archive/refs/tags/v1.16.0.zip
+   )
+   FetchContent_GetProperties(googletest)
+   if(NOT googletest_POPULATED)
+     FetchContent_Populate(googletest)
+     add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
+   endif()
+   include(GoogleTest)
+   set(TEST_DATA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/data"
+       CACHE PATH "Root directory holding the test fixtures (data/tests/*.db)")
+endif()
+
+OPTION(ENABLE_COVERAGE "Build with gcov/lcov coverage (GCC/Clang, Debug only; see coverage-report.sh)" OFF)
+IF(ENABLE_COVERAGE)
+   IF(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      MESSAGE(FATAL_ERROR "ENABLE_COVERAGE requires GCC or Clang with gcov/lcov (current: ${CMAKE_CXX_COMPILER_ID}).")
+   ENDIF()
+   IF(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+      MESSAGE(FATAL_ERROR "ENABLE_COVERAGE requires CMAKE_BUILD_TYPE=Debug (current: \"${CMAKE_BUILD_TYPE}\").")
+   ENDIF()
+   MESSAGE(STATUS "Coverage instrumentation enabled")
+   ADD_COMPILE_OPTIONS(--coverage -O0 -g)
+   ADD_LINK_OPTIONS(--coverage)
+ENDIF()
+
+# Check UDEBUG/UINFO/UWARN/UERROR/uFormat format strings against their
+# arguments.
+# -Wno-format-zero-length: UDEBUG("") is used deliberately as a trace point
+# -Wformat-security: non-literal format strings, e.g. UERROR(uFormat(...).c_str())
+OPTION(ENABLE_FORMAT_ERRORS "Treat log/uFormat format-string mismatches as errors (GCC/Clang)" OFF)
+IF(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+   ADD_COMPILE_OPTIONS(-Wformat -Wformat-security -Wno-format-zero-length)
+   IF(ENABLE_FORMAT_ERRORS)
+      MESSAGE(STATUS "Format-string mismatches are errors")
+      ADD_COMPILE_OPTIONS(-Werror=format -Werror=format-security)
+   ENDIF()
+ELSEIF(ENABLE_FORMAT_ERRORS)
+   MESSAGE(WARNING "ENABLE_FORMAT_ERRORS has no effect on ${CMAKE_CXX_COMPILER_ID} (needs GCC/Clang)")
+ENDIF()
 
 ####### DEPENDENCIES #######
 IF(MOBILE_BUILD)
@@ -200,7 +275,7 @@ option(WITH_REALSENSE     "Include RealSense support"            ON)
 option(WITH_REALSENSE_SLAM "Include RealSenseSlam support"       ON)
 option(WITH_REALSENSE2    "Include RealSense2 support"           ON)
 option(WITH_MYNTEYE       "Include mynteye-s support"            ON)
-option(WITH_DEPTHAI       "Include depthai-core support"         OFF)
+option(WITH_DEPTHAI       "Include depthai-core v2 support"      OFF)
 option(WITH_XVSDK         "Include XVisio SDK support"           OFF)
 option(WITH_ORBBEC_SDK    "Include Orbbec SDK v2 support"        OFF)
 option(WITH_OCTOMAP       "Include OctoMap support"              ON)
@@ -222,6 +297,7 @@ option(WITH_FASTCV        "Include FastCV support"               ON)
 option(WITH_OPENMP        "Include OpenMP support"               ON)
 option(WITH_OPENGV        "Include OpenGV support"               ON)
 option(BUILD_OPENGV       "Build OpenGV internally instead of using the system one" OFF)
+option(WITH_APRILTAG      "Include AprilTag support"             OFF)
 IF(MOBILE_BUILD)
 option(PCL_OMP            "With PCL OMP implementations"         OFF)
 ELSE()
@@ -232,7 +308,25 @@ option(BUILD_WITH_RPATH_NOT_RUNPATH "Explicitly disable usage of RUNPATH for the
 set(RTABMAP_QT_VERSION AUTO CACHE STRING "Force a specific Qt version.")
 set_property(CACHE RTABMAP_QT_VERSION PROPERTY STRINGS AUTO 4 5 6)
 
-FIND_PACKAGE(OpenCV REQUIRED QUIET COMPONENTS core calib3d imgproc highgui stitching photo video videoio OPTIONAL_COMPONENTS aruco objdetect xfeatures2d nonfree gpu cudafeatures2d cudaoptflow cudaimgproc)
+# OpenCV components. calib3d was split into "calib" + "geometry" in OpenCV 5.
+# These lists are reused below to generate RTABMapConfig.cmake so downstream
+# find_package(RTABMap) requests the same components this build used.
+SET(RTABMAP_OpenCV_COMPONENTS_5 core imgproc highgui stitching photo video videoio calib geometry)
+SET(RTABMAP_OpenCV_COMPONENTS_4 core imgproc highgui stitching photo video videoio calib3d)
+SET(RTABMAP_OpenCV_OPTIONAL_COMPONENTS_5 objdetect xfeatures2d nonfree gpu cudafeatures2d cudaoptflow cudaimgproc)
+SET(RTABMAP_OpenCV_OPTIONAL_COMPONENTS_4 aruco objdetect xfeatures2d nonfree gpu cudafeatures2d cudaoptflow cudaimgproc)
+
+# Probe OpenCV without a version constraint first, then request the components
+# matching the detected major version. A version-constrained find that fails to
+# match (e.g. asking for 5 when only 4 is present) resets OpenCV_DIR to NOTFOUND,
+# which breaks toolchain builds that rely on a -DOpenCV_DIR hint (e.g. Android,
+# where CMAKE_FIND_ROOT_PATH restricts the search).
+FIND_PACKAGE(OpenCV REQUIRED QUIET COMPONENTS core)
+IF(OpenCV_VERSION_MAJOR GREATER 4)
+  FIND_PACKAGE(OpenCV REQUIRED QUIET COMPONENTS ${RTABMAP_OpenCV_COMPONENTS_5} OPTIONAL_COMPONENTS ${RTABMAP_OpenCV_OPTIONAL_COMPONENTS_5})
+ELSE()
+  FIND_PACKAGE(OpenCV REQUIRED QUIET COMPONENTS ${RTABMAP_OpenCV_COMPONENTS_4} OPTIONAL_COMPONENTS ${RTABMAP_OpenCV_OPTIONAL_COMPONENTS_4})
+ENDIF()
 
 IF(WITH_QT)
 FIND_PACKAGE(PCL 1.7 REQUIRED QUIET COMPONENTS common io kdtree search surface filters registration sample_consensus segmentation visualization)
@@ -530,14 +624,7 @@ IF(WITH_GTSAM)
     # Force config mode to ignore PCL's findGTSAM.cmake file
     FIND_PACKAGE(GTSAM CONFIG QUIET)
     IF(GTSAM_FOUND)
-      # For issue https://github.com/introlab/rtabmap/pull/1626
-      FIND_FILE(GTSAM_NOISE_MODEL_FACTOR_N_FILE gtsam/nonlinear/NoiseModelFactorN.h
-         PATHS ${GTSAM_INCLUDE_DIR}
-         NO_DEFAULT_PATH)
-      IF(GTSAM_NOISE_MODEL_FACTOR_N_FILE)
-         MESSAGE(STATUS "GTSAM with NoiseModelFactorN.h")
-         ADD_DEFINITIONS("-DGTSAM_WITH_NOISE_MODEL_FACTOR_N")
-      ENDIF(GTSAM_NOISE_MODEL_FACTOR_N_FILE)
+      INCLUDE(${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/CheckGTSAMFeatures.cmake)
     ENDIF(GTSAM_FOUND)
 ENDIF(WITH_GTSAM)
 
@@ -702,7 +789,9 @@ IF(WITH_MYNTEYE)
 ENDIF(WITH_MYNTEYE)
 
 IF(WITH_DEPTHAI)
-    FIND_PACKAGE(depthai 2.24)
+    # Force DepthAI major version 2 (>=2.24, <3.0): the v3 API is not yet
+    # supported (see CameraDepthAI).
+    FIND_PACKAGE(depthai 2.24...<3.0)
     IF(depthai_FOUND)
        MESSAGE(STATUS "Found depthai-core (targets)")
     ENDIF(depthai_FOUND)
@@ -833,22 +922,7 @@ IF(WITH_VINS_FUSION)
 ENDIF(WITH_VINS_FUSION)
 
 IF(WITH_OPENVINS)
-    FIND_PACKAGE(ov_msckf)
-    # On ROS2, the indirect includes and libraries
-    # are not forwarded by ov_msckf target, append them manually
-    FIND_PACKAGE(ov_core)
-    FIND_PACKAGE(ov_init)
-    IF(ov_msckf_FOUND AND ov_core_FOUND AND ov_init_FOUND)
-      SET(ov_msckf_INCLUDE_DIRS
-         ${ov_msckf_INCLUDE_DIRS}
-         ${ov_core_INCLUDE_DIRS}
-         ${ov_init_INCLUDE_DIRS})
-      SET(ov_msckf_LIBRARIES
-         ${ov_msckf_LIBRARIES}
-         ${ov_core_LIBRARIES}
-         ${ov_init_LIBRARIES})
-      MESSAGE(STATUS "Found OpenVINS: ${ov_msckf_INCLUDE_DIRS}")
-    ENDIF()
+   FIND_PACKAGE(OpenVINS)
 ENDIF(WITH_OPENVINS)
 
 IF(WITH_FASTCV)
@@ -857,6 +931,20 @@ IF(WITH_FASTCV)
        MESSAGE(STATUS "Found FastCV: ${FastCV_INCLUDE_DIRS}")
     ENDIF(FastCV_FOUND)
 ENDIF(WITH_FASTCV)
+
+IF(WITH_APRILTAG)
+    FIND_PACKAGE(apriltag QUIET)
+    IF(apriltag_FOUND)
+      get_target_property(APRILTAG_LOCATION apriltag::apriltag LOCATION)
+      get_target_property(APRILTAG_INCLUDES apriltag::apriltag INTERFACE_INCLUDE_DIRECTORIES)
+      FIND_FILE(apriltag_aruco_4x4_50_header NAMES tagAruco4x4_50.h PATH_SUFFIXES aruco PATHS ${APRILTAG_INCLUDES} NO_DEFAULT_PATH)
+      SET(WITH_APRILTAG_ARUCO NO)
+      IF(apriltag_aruco_4x4_50_header)
+         SET(WITH_APRILTAG_ARUCO YES)
+      ENDIF()
+      MESSAGE(STATUS "Found apriltag (with aruco=${WITH_APRILTAG_ARUCO}): ${APRILTAG_LOCATION} ${APRILTAG_INCLUDES}")
+    ENDIF(apriltag_FOUND)
+ENDIF(WITH_APRILTAG)
 
 IF(WITH_OPENGV OR okvis_FOUND)
    if(NOT BUILD_OPENGV)
@@ -893,6 +981,9 @@ IF(WITH_OPENGV OR okvis_FOUND)
          set(BUILD_TESTS OFF)
          set(CMAKE_BUILD_TYPE Release)
          set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+         # OpenGV's CMakeLists.txt declares cmake_minimum_required(VERSION 2.x),
+         # which CMake >= 4.0 (e.g. recent Ubuntu) rejects. Allow it to configure.
+         set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
          # Eigen should have been already added by PCL, just populate the compatible variables
          IF(EIGEN_INCLUDE_DIRS)
             set(EIGEN_INCLUDE_DIRS "${EIGEN_INCLUDE_DIRS}" CACHE PATH "Eigen include dirs" FORCE)
@@ -931,7 +1022,7 @@ IF(NOT (APPLE OR WIN32) AND BUILD_WITH_RPATH_NOT_RUNPATH)
 ENDIF()
 
 IF(NOT MSVC)
-    IF(Qt6_FOUND OR (G2O_FOUND AND G2O_CPP11 EQUAL 1) OR TORCH_FOUND OR MRPT_FOUND)
+    IF(Qt6_FOUND OR (G2O_FOUND AND G2O_CPP11 EQUAL 1) OR (GTSAM_FOUND AND GTSAM_VERSION VERSION_GREATER_EQUAL "4.3.0") OR TORCH_FOUND OR MRPT_FOUND)
       # Qt6 requires c++17
       include(CheckCXXCompilerFlag)
       CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
@@ -968,6 +1059,7 @@ IF(NOT MSVC)
       ENDIF()
     ENDIF()
 ENDIF()
+
 
 
 ####### OSX BUNDLE CMAKE_INSTALL_PREFIX #######
@@ -1058,6 +1150,12 @@ ENDIF(NOT Open3D_FOUND)
 IF(NOT FastCV_FOUND)
    SET(FASTCV "//")
 ENDIF(NOT FastCV_FOUND)
+IF(NOT apriltag_FOUND)
+   SET(APRILTAG "//")
+   SET(APRILTAG_ARUCO "//")
+ELSEIF(NOT WITH_APRILTAG_ARUCO)
+   SET(APRILTAG_ARUCO "//")
+ENDIF()
 IF(NOT opengv_FOUND OR NOT WITH_OPENGV)
    SET(OPENGV "//")
 ENDIF(NOT opengv_FOUND OR NOT WITH_OPENGV)
@@ -1194,7 +1292,7 @@ ENDIF()
 IF(NOT vins_FOUND)
    SET(VINSFUSION "//")
 ENDIF()
-IF(NOT ov_msckf_FOUND)
+IF(NOT OpenVINS_FOUND)
    SET(OPENVINS "//")
 ENDIF()
 IF(NOT CUVSLAM_FOUND)
@@ -1225,6 +1323,15 @@ IF(NOT WITH_MADGWICK)
 ENDIF()
 
 CONFIGURE_FILE(Version.h.in ${CMAKE_CURRENT_BINARY_DIR}/corelib/src/include/${PROJECT_PREFIX}/core/Version.h)
+
+# API documentation (Doxygen). Off by default: preparing it downloads the theme,
+# spawns Doxygen to regenerate the HTML header and runs the parameter-page
+# generator, none of which an ordinary build needs. docs-report.sh turns it on;
+# see also .github/workflows/docs.yml.
+IF(BUILD_DOCUMENTATION)
+   INCLUDE(RTABMapDocumentation)
+   RTABMAP_SETUP_DOCUMENTATION()
+ENDIF(BUILD_DOCUMENTATION)
 
 ADD_SUBDIRECTORY( utilite )
 ADD_SUBDIRECTORY( corelib )
@@ -1301,6 +1408,18 @@ install(EXPORT rtabmapTargets
 ####
 # Setup RTABMapConfig.cmake
 ####
+IF(OpenCV_VERSION_MAJOR GREATER 4)
+  SET(CONF_OPENCV_COMPONENTS ${RTABMAP_OpenCV_COMPONENTS_5})
+  SET(CONF_OPENCV_OPTIONAL_COMPONENTS ${RTABMAP_OpenCV_OPTIONAL_COMPONENTS_5})
+ELSE()
+  SET(CONF_OPENCV_COMPONENTS ${RTABMAP_OpenCV_COMPONENTS_4})
+  SET(CONF_OPENCV_OPTIONAL_COMPONENTS ${RTABMAP_OpenCV_OPTIONAL_COMPONENTS_4})
+ENDIF()
+STRING(REPLACE ";" " " CONF_OPENCV_COMPONENTS "${CONF_OPENCV_COMPONENTS}")
+STRING(REPLACE ";" " " CONF_OPENCV_OPTIONAL_COMPONENTS "${CONF_OPENCV_OPTIONAL_COMPONENTS}")
+# Pin the OpenCV major version so downstream projects find the same major RTAB-Map was
+# built against
+SET(CONF_OPENCV_VERSION_MAJOR ${OpenCV_VERSION_MAJOR})
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
@@ -1446,6 +1565,10 @@ MESSAGE(STATUS "  CMAKE_INSTALL_LIBDIR = ${CMAKE_INSTALL_LIBDIR}")
 MESSAGE(STATUS "  BUILD_APP =            ${BUILD_APP}")
 MESSAGE(STATUS "  BUILD_TOOLS =          ${BUILD_TOOLS}")
 MESSAGE(STATUS "  BUILD_EXAMPLES =       ${BUILD_EXAMPLES}")
+MESSAGE(STATUS "  BUILD_TESTING =        ${BUILD_TESTING}")
+MESSAGE(STATUS "  BUILD_PERF_TESTS =     ${BUILD_PERF_TESTS}")
+MESSAGE(STATUS "  ENABLE_COVERAGE =      ${ENABLE_COVERAGE}")
+MESSAGE(STATUS "  ENABLE_FORMAT_ERRORS = ${ENABLE_FORMAT_ERRORS}")
 IF(NOT WIN32)
     # see comment above for the BUILD_SHARED_LIBS option on Windows
     MESSAGE(STATUS "  BUILD_SHARED_LIBS =    ${BUILD_SHARED_LIBS}")
@@ -1467,28 +1590,34 @@ ENDIF(PCL_COMPILE_OPTIONS)
 MESSAGE(STATUS "")
 MESSAGE(STATUS "Optional dependencies ('*' affects some default parameters) :")
 IF(OpenCV_FOUND)
+  IF((OpenCV_VERSION_MAJOR LESS 4 AND OPENCV_ARUCO_FOUND) OR 
+     (OpenCV_VERSION_MAJOR GREATER 4 AND OPENCV_OBJDETECT_FOUND))
+    set(ARUCO_STR "YES")
+  ELSE()
+    set(ARUCO_STR "NO")
+  ENDIF()
   IF(OpenCV_VERSION_MAJOR EQUAL 2)
     IF(OPENCV_NONFREE_FOUND)
-      MESSAGE(STATUS " *With OpenCV 2 nonfree module (SIFT/SURF) = YES (License: Non commercial)")
+      MESSAGE(STATUS " *With OpenCV 2 nonfree module (SIFT/SURF) = YES, aruco = ${ARUCO_STR} (License: Non commercial)")
     ELSE()
-      MESSAGE(STATUS " *With OpenCV 2 nonfree module (SIFT/SURF) = NO (not found, License: BSD)")
+      MESSAGE(STATUS " *With OpenCV 2 nonfree module (SIFT/SURF) = NO, aruco = ${ARUCO_STR} (not found, License: BSD)")
     ENDIF()
   ELSE()
     IF(OPENCV_XFEATURES2D_FOUND)
       IF(NONFREE STREQUAL "//")
         IF((OpenCV_VERSION_MAJOR LESS 4) OR ((OpenCV_VERSION_MAJOR EQUAL 4) AND (OpenCV_VERSION_MINOR LESS 5)))
-          MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = NO (License: BSD)")
+          MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = NO, aruco = ${ARUCO_STR} (License: BSD)")
         ELSE()
-          MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = NO (License: Apache 2)")
+          MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = NO, aruco = ${ARUCO_STR} (License: Apache 2)")
         ENDIF()
       ELSE()
-        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = YES (License: Non commercial)")
+        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = YES, nonfree = YES, aruco = ${ARUCO_STR} (License: Non commercial)")
       ENDIF()
     ELSE()
       IF((OpenCV_VERSION_MAJOR LESS 4) OR ((OpenCV_VERSION_MAJOR EQUAL 4) AND (OpenCV_VERSION_MINOR LESS 5)))
-        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = NO, nonfree = NO (License: BSD)")
+        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = NO, nonfree = NO, aruco = ${ARUCO_STR} (License: BSD)")
       ELSE()
-        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = NO, nonfree = NO (License: Apache 2)")
+        MESSAGE(STATUS " *With OpenCV ${OpenCV_VERSION} xfeatures2d = NO, nonfree = NO, aruco = ${ARUCO_STR} (License: Apache 2)")
       ENDIF()
     ENDIF()
   ENDIF()
@@ -1561,6 +1690,14 @@ ELSEIF(NOT WITH_FASTCV)
 MESSAGE(STATUS "  With FastCV               = NO (WITH_FASTCV=OFF)")
 ELSE()
 MESSAGE(STATUS "  With FastCV               = NO (FastCV not found)")
+ENDIF()
+
+IF(apriltag_FOUND)
+MESSAGE(STATUS "  With AprilTag ${apriltag_VERSION}       = YES (aruco=${WITH_APRILTAG_ARUCO}) (License: BSD 2-Clause License)")
+ELSEIF(NOT WITH_APRILTAG)
+MESSAGE(STATUS "  With AprilTag             = NO (WITH_APRILTAG=OFF)")
+ELSE()
+MESSAGE(STATUS "  With AprilTag             = NO (apriltag not found)")
 ENDIF()
 
 IF(PDAL_FOUND)
@@ -1847,7 +1984,7 @@ MESSAGE(STATUS "  With DepthAI ${depthai_VERSION}       = YES (License: MIT)")
 ELSEIF(NOT WITH_DEPTHAI)
 MESSAGE(STATUS "  With DepthAI              = NO (WITH_DEPTHAI=OFF)")
 ELSE()
-MESSAGE(STATUS "  With DepthAI              = NO (depthai-core not found)")
+MESSAGE(STATUS "  With DepthAI              = NO (depthai-core v2 not found)")
 ENDIF()
 
 IF(xvsdk_FOUND)
@@ -1939,7 +2076,7 @@ ELSE()
 MESSAGE(STATUS "  With VINS-Fusion          = NO (VINS-Fusion not found)")
 ENDIF()
 
-IF(ov_msckf_FOUND)
+IF(OpenVINS_FOUND)
 MESSAGE(STATUS "  With OpenVINS             = YES (License: GPLv3)")
 ELSEIF(NOT WITH_OPENVINS)
 MESSAGE(STATUS "  With OpenVINS             = NO (WITH_OPENVINS=OFF)")

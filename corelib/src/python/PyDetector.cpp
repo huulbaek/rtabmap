@@ -24,6 +24,7 @@ PyDetector::PyDetector(const ParametersMap & parameters) :
 		path_(Parameters::defaultPyDetectorPath()),
 		cuda_(Parameters::defaultPyDetectorCuda())
 {
+	PythonInterface::instance("PyDetector");
 	this->parseParameters(parameters);
 
 	UDEBUG("path = %s", path_.c_str());
@@ -39,11 +40,19 @@ PyDetector::PyDetector(const ParametersMap & parameters) :
 	std::string matcherPythonDir = UDirectory::getDir(path_);
 	if(!matcherPythonDir.empty())
 	{
+		// For Windows
+		matcherPythonDir = uReplaceChar(matcherPythonDir, '\\', '/');
 		PyRun_SimpleString("import sys");
 		PyRun_SimpleString(uFormat("sys.path.append(\"%s\")", matcherPythonDir.c_str()).c_str());
 	}
 
 	_import_array();
+
+	// Invalidate importlib's directory-listing caches so a script created
+	// after sys.path was first scanned in this process is still found. Without
+	// this, the second PyDetector instance pointing at a freshly-written
+	// script in an already-known directory fails with ModuleNotFoundError.
+	PyRun_SimpleString("import importlib; importlib.invalidate_caches()");
 
 	std::string scriptName = uSplit(UFile::getName(path_), '.').front();
 	PyObject * pName = PyUnicode_FromString(scriptName.c_str());
@@ -81,7 +90,10 @@ void PyDetector::parseParameters(const ParametersMap & parameters)
 	Parameters::parse(parameters, Parameters::kPyDetectorPath(), path_);
 	Parameters::parse(parameters, Parameters::kPyDetectorCuda(), cuda_);
 
-	path_ = uReplaceChar(path_, '~', UDirectory::homeDir());
+	if(!path_.empty() && path_[0] == '~' && (path_.size() == 1 || path_[1] == '/' || path_[1] == '\\'))
+	{
+		path_ = UDirectory::homeDir() + path_.substr(1);
+	}
 }
 
 std::vector<cv::KeyPoint> PyDetector::generateKeypointsImpl(const cv::Mat & image, const cv::Rect & roi, const cv::Mat & mask)
@@ -202,18 +214,30 @@ std::vector<cv::KeyPoint> PyDetector::generateKeypointsImpl(const cv::Mat & imag
 
 					arrayPtr = reinterpret_cast<PyArrayObject*>(descPtr);
 					int nDesc = PyArray_SHAPE(arrayPtr)[0];
-					UASSERT(nDesc = nKpts);
 					int dim = PyArray_SHAPE(arrayPtr)[1];
 					type = PyArray_TYPE(arrayPtr);
 					UDEBUG("Desc array %dx%d (type=%d)", nDesc, dim, type);
-					UASSERT_MSG(type == NPY_FLOAT, uFormat("Returned matches should type FLOAT=11, received type=%d", type).c_str());
 
-					c_out = reinterpret_cast<float*>(PyArray_DATA(arrayPtr));
-					for (int i = 0, kpt_idx = 0; i < nDesc*dim; i+=dim, kpt_idx++)
+					if(nDesc != nKpts || dim <= 0)
 					{
-						if(keep_kpt[kpt_idx]) {
-							cv::Mat descriptor = cv::Mat(1, dim, CV_32FC1, &c_out[i]).clone();
-							descriptors_.push_back(descriptor);
+						UWARN("Python detector returned mismatched arrays: "
+								"%d keypoints vs %d descriptors (dim=%d). "
+								"Returning empty features.",
+								nKpts, nDesc, dim);
+						keypoints.clear();
+						descriptors_ = cv::Mat();
+					}
+					else
+					{
+						UASSERT_MSG(type == NPY_FLOAT, uFormat("Returned matches should type FLOAT=11, received type=%d", type).c_str());
+
+						c_out = reinterpret_cast<float*>(PyArray_DATA(arrayPtr));
+						for (int i = 0, kpt_idx = 0; i < nDesc*dim; i+=dim, kpt_idx++)
+						{
+							if(keep_kpt[kpt_idx]) {
+								cv::Mat descriptor = cv::Mat(1, dim, CV_32FC1, &c_out[i]).clone();
+								descriptors_.push_back(descriptor);
+							}
 						}
 					}
 				}
@@ -235,7 +259,15 @@ std::vector<cv::KeyPoint> PyDetector::generateKeypointsImpl(const cv::Mat & imag
 
 cv::Mat PyDetector::generateDescriptorsImpl(const cv::Mat & image, std::vector<cv::KeyPoint> & keypoints) const
 {
-	UASSERT((int)keypoints.size() == descriptors_.rows);
+	if(!keypoints.empty() && (int)keypoints.size() != descriptors_.rows)
+	{
+		UERROR("The number of keypoints (%ld) doesn't match the number of buffered "
+			"descriptors (%d). PyDetector's descriptors extraction should "
+			"be called right after keypoints detection, with same keypoints "
+			"returned by the detection. Returning empty descriptors.", 
+			keypoints.size(), descriptors_.rows);
+		return cv::Mat();
+	}
 	return descriptors_;
 }
 
