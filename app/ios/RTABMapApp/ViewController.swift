@@ -109,6 +109,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
     
     @IBOutlet weak var stopButton: UIButton!
     @IBOutlet weak var recordButton: UIButton!
+    @IBOutlet weak var photoButton: UIButton!
     @IBOutlet weak var menuButton: UIButton!
     @IBOutlet weak var viewButton: UIButton!
     @IBOutlet weak var newScanButtonLarge: UIButton!
@@ -704,6 +705,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = false
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = false
+            photoButton.isHidden = false
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = false
@@ -730,6 +732,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = !mHudVisible
             stopButton.isHidden = false
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = true
@@ -759,6 +762,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = mState != .STATE_VISUALIZING_CAMERA
@@ -785,6 +789,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = !mHudVisible
             newScanButtonLarge.isHidden = true // WELCOME button
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = !mHudVisible
             stopCameraButton.isHidden = true
@@ -811,6 +816,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             viewButton.isHidden = mState != .STATE_WELCOME && !mHudVisible
             newScanButtonLarge.isHidden = mState != .STATE_WELCOME
             recordButton.isHidden = true
+            photoButton.isHidden = true
             stopButton.isHidden = true
             closeVisualizationButton.isHidden = true
             stopCameraButton.isHidden = true
@@ -978,8 +984,20 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             fileMenuChildren.append(UIAction(title: "Measuring...", image: UIImage(systemName: "ruler"), attributes: .disabled, state: .off, handler: { _ in
             }))
         }
+        let photoCount = ManualPhotoStore.shared.currentPhotoCount()
+        fileMenuChildren.append(UIAction(
+            title: "Manual Photos (\(photoCount))",
+            image: UIImage(systemName: "photo.on.rectangle"),
+            handler: { [weak self] _ in
+                guard let self = self else { return }
+                let gallery = ManualPhotoGalleryViewController()
+                let nav = UINavigationController(rootViewController: gallery)
+                nav.modalPresentationStyle = .formSheet
+                self.present(nav, animated: true)
+            }
+        ))
         fileMenuChildren.append(advancedMenu)
-        
+
         // File menu
         let fileMenu = UIMenu(title: "File", options: .displayInline, children: fileMenuChildren)
         
@@ -1652,6 +1670,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
                     catch {
                         print("Could not clear tmp database: \(error)")
                     }
+                    ManualPhotoStore.shared.deleteSession(for: self.RTABMAP_TMP_DB)
                     self.newScan(dataRecordingMode: dataRecordingMode)
                 }
                 alert.addAction(alertActionNo)
@@ -1744,7 +1763,14 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             self.rtabmap!.setDataRecorderMode(enabled: dataRecordingMode)
             self.optimizedGraphShown = true // Always reset to true when opening a database
             self.rtabmap!.openDatabase(databasePath: tmpDatabase.path, databaseInMemory: inMemory, optimize: false, clearDatabase: true)
-            
+
+            do {
+                let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+                _ = try ManualPhotoStore.shared.startNewSession(dbFilename: self.RTABMAP_TMP_DB, appVersion: appVersion)
+            } catch {
+                print("ManualPhotoStore.startNewSession failed: \(error)")
+            }
+
             if(!(self.mState == State.STATE_CAMERA || self.mState == State.STATE_MAPPING))
             {
                 if(mDataRecording) {
@@ -1862,6 +1888,7 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
             }
             alert.addAction(yes)
             self.present(alert, animated: true, completion: nil)
+            try? ManualPhotoStore.shared.recordSavedDB(filename: fileName)
             do {
                 let tmpDatabase = self.getDocumentDirectory().appendingPathComponent(self.RTABMAP_TMP_DB)
                 try FileManager.default.removeItem(at: tmpDatabase)
@@ -2187,6 +2214,17 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         
         openedDatabasePath = fileUrl;
         let fileName: String = self.openedDatabasePath!.lastPathComponent
+        if ManualPhotoStore.shared.attachSession(for: fileName) == nil {
+            // First-time open of this DB (or a DB shared in from elsewhere) — mint a session
+            // bound to its real filename so any subsequent captures (e.g. during Append Scan)
+            // go into the correct folder.
+            do {
+                let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+                _ = try ManualPhotoStore.shared.startNewSession(dbFilename: fileName, appVersion: appVersion)
+            } catch {
+                print("ManualPhotoStore.startNewSession (openDatabase) failed: \(error)")
+            }
+        }
         
         var progressDialog = UIAlertController(title: "Loading", message: String(format: "Loading \"%@\". Please wait while point clouds and/or meshes are created...", fileName), preferredStyle: .alert)
         
@@ -2398,6 +2436,19 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
                 if(self.rtabmap!.writeExportedMesh(directory: exportDir.path, name: fileName))
                 {
                     do {
+                        // Copy manual photos into the export dir if enabled and not LAZ export.
+                        let includePhotos = UserDefaults.standard.object(forKey: "PhotoIncludeInExport") as? Bool ?? true
+                        if includePhotos, !isLAZ, let photosFolder = ManualPhotoStore.shared.currentSessionURL(),
+                           FileManager.default.fileExists(atPath: photosFolder.path) {
+                            let destination = exportDir.appendingPathComponent("manual_photos")
+                            do {
+                                try FileManager.default.copyItem(at: photosFolder, to: destination)
+                                print("Copied manual photos folder into export staging")
+                            } catch {
+                                print("Failed to copy manual photos into export: \(error)")
+                            }
+                        }
+
                         let fileURLs = try FileManager.default.contentsOfDirectory(at: exportDir, includingPropertiesForKeys: nil)
                         if(!fileURLs.isEmpty)
                         {
@@ -2559,7 +2610,132 @@ class ViewController: GLKViewController, ARSessionDelegate, RTABMapObserver, UIP
         lowMemoryWarningShown = false
         updateState(state: .STATE_MAPPING)
     }
-    
+
+    @IBAction func takePhotoAction(_ sender: UIButton) {
+        guard let frame = session.currentFrame else {
+            showToast(message: "No frame available", seconds: 1)
+            return
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        capture(frame: frame)
+    }
+
+    private func capture(frame: ARFrame) {
+        // Snapshot primitives synchronously before the ARFrame goes stale.
+        let arkitTs = frame.timestamp
+        let wallClock = Date()
+        let t = frame.camera.transform
+        let transformRows: [[Float]] = [
+            [t[0,0], t[0,1], t[0,2], t[0,3]],
+            [t[1,0], t[1,1], t[1,2], t[1,3]],
+            [t[2,0], t[2,1], t[2,2], t[2,3]],
+            [t[3,0], t[3,1], t[3,2], t[3,3]],
+        ]
+        let intr = frame.camera.intrinsics
+        let imageSize = frame.camera.imageResolution
+        let lightAmbient = frame.lightEstimate.map { Double($0.ambientIntensity) }
+        let trackingState = trackingStateString(frame.camera.trackingState)
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
+        let orientationStr = orientationString(orientation)
+
+        let includeGPS = UserDefaults.standard.object(forKey: "PhotoIncludeGPS") as? Bool ?? true
+        let gps: GPSMeta? = {
+            guard includeGPS, let loc = mLastKnownLocation else { return nil }
+            return GPSMeta(
+                lat: loc.coordinate.latitude,
+                lon: loc.coordinate.longitude,
+                alt: loc.verticalAccuracy >= 0 ? loc.altitude : nil,
+                hAcc: loc.horizontalAccuracy >= 0 ? loc.horizontalAccuracy : nil,
+                vAcc: loc.verticalAccuracy >= 0 ? loc.verticalAccuracy : nil
+            )
+        }()
+
+        let jpegQualityRaw = UserDefaults.standard.object(forKey: "PhotoJPEGQuality") as? Double ?? 0.85
+        let jpegQuality = CGFloat(max(0.5, min(1.0, jpegQualityRaw)))
+
+        // Retain the pixel buffer for use on the background queue. CVPixelBuffer isn't
+        // Sendable, but ownership is handed off: only that queue reads and releases it.
+        let pb = frame.capturedImage
+        nonisolated(unsafe) let retained = Unmanaged.passRetained(pb)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { retained.release() }
+            let buffer = retained.takeUnretainedValue()
+            do {
+                let jpeg = try PixelBufferJPEG.jpeg(from: buffer, interfaceOrientation: orientation, quality: jpegQuality)
+
+                // The session is owned by the main-thread lifecycle (newScan / openDatabase).
+                // If it's missing here, that's a caller bug — surface it rather than racing
+                // to create one from a background queue.
+                guard let sessionId = ManualPhotoStore.shared.currentSessionId else {
+                    DispatchQueue.main.async {
+                        self.showToast(message: "No photo session — start a scan first", seconds: 2)
+                    }
+                    return
+                }
+                let result = try ManualPhotoStore.shared.writePhoto(jpeg: jpeg) { shortId, filename, bytes, sha in
+                    PhotoSidecar(
+                        id: shortId,
+                        sessionId: sessionId,
+                        capturedAt: wallClock,
+                        arkitTimestamp: arkitTs,
+                        camera: CameraMeta(
+                            transform: transformRows,
+                            intrinsics: .init(fx: intr[0,0], fy: intr[1,1], cx: intr[2,0], cy: intr[2,1]),
+                            imageSize: .init(width: Int(imageSize.width), height: Int(imageSize.height)),
+                            orientation: orientationStr,
+                            trackingState: trackingState
+                        ),
+                        env: EnvMeta(ambientIntensity: lightAmbient),
+                        gps: gps,
+                        file: FileMeta(name: filename, bytes: bytes, sha256: sha),
+                        user: .empty,
+                        schemaVersion: 1
+                    )
+                }
+                DispatchQueue.main.async {
+                    self.showToast(message: "Photo saved", seconds: 1)
+                    self.presentPhotoEditor(for: result)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.showToast(message: "Failed to save photo: \(error.localizedDescription)", seconds: 3)
+                }
+            }
+        }
+    }
+
+    private func trackingStateString(_ s: ARCamera.TrackingState) -> String {
+        switch s {
+        case .normal: return "normal"
+        case .notAvailable: return "notAvailable"
+        case .limited(.initializing): return "limitedInitializing"
+        case .limited(.relocalizing): return "limitedRelocalizing"
+        case .limited(.excessiveMotion): return "limitedExcessiveMotion"
+        case .limited(.insufficientFeatures): return "limitedInsufficientFeatures"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func orientationString(_ o: UIInterfaceOrientation) -> String {
+        switch o {
+        case .portrait: return "portrait"
+        case .portraitUpsideDown: return "portraitUpsideDown"
+        case .landscapeLeft: return "landscapeLeft"
+        case .landscapeRight: return "landscapeRight"
+        case .unknown: return "unknown"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func presentPhotoEditor(for result: ManualPhotoStore.WriteResult) {
+        let editor = PhotoMetadataEditor(jpegURL: result.jpegURL, sidecar: result.sidecar)
+        editor.delegate = self
+        let nav = UINavigationController(rootViewController: editor)
+        nav.modalPresentationStyle = .formSheet
+        present(nav, animated: true)
+    }
+
     @IBAction func newScanAction(_ sender: UIButton) {
         newScan()
     }
@@ -2765,6 +2941,7 @@ extension ViewController: DatabaseViewDelegate {
         catch {
             print("Error deleting file \(databaseURL)")
         }
+        ManualPhotoStore.shared.deleteSession(for: databaseURL.lastPathComponent)
         self.updateDatabases()
         if(!databases.isEmpty)
         {
@@ -2790,5 +2967,14 @@ extension SKStoreReviewController {
         if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
             requestReview(in: scene)
         }
+    }
+}
+
+extension ViewController: PhotoMetadataEditorDelegate {
+    func editor(_ editor: PhotoMetadataEditor, didSave sidecar: PhotoSidecar, at jpegURL: URL) {
+        // No-op; the gallery (Task 10/11) refreshes on next appearance.
+    }
+    func editor(_ editor: PhotoMetadataEditor, didDelete jpegURL: URL) {
+        // No-op; the gallery refresh covers this too.
     }
 }

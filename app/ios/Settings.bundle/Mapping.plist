@@ -982,6 +982,48 @@
 			<key>DefaultValue</key>
 			<false/>
 		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>Title</key>
+			<string>Manual Photos</string>
+			<key>FooterText</key>
+			<string>Manual photos are saved alongside the database. Taps of the camera button during a scan capture a still with pose, intrinsics, and optional GPS.</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSSliderSpecifier</string>
+			<key>Key</key>
+			<string>PhotoJPEGQuality</string>
+			<key>Title</key>
+			<string>Photo JPEG Quality</string>
+			<key>DefaultValue</key>
+			<real>0.85</real>
+			<key>MinimumValue</key>
+			<real>0.5</real>
+			<key>MaximumValue</key>
+			<real>1.0</real>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Key</key>
+			<string>PhotoIncludeGPS</string>
+			<key>Title</key>
+			<string>Include GPS in Photo Metadata</string>
+			<key>DefaultValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Key</key>
+			<string>PhotoIncludeInExport</string>
+			<key>Title</key>
+			<string>Include Photos in Export Zip</string>
+			<key>DefaultValue</key>
+			<true/>
+		</dict>
 	</array>
 </dict>
 </plist>
